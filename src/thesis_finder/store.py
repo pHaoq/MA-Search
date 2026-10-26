@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS topics (
     passed_over INTEGER NOT NULL DEFAULT 0,  -- reviews where it was ranked but not picked
     lit_review TEXT,            -- JSON LitReview, set by the review step
     reviewed_at TEXT,
+    closest_work TEXT,          -- closest existing paper, as named by the agent
+    whats_new TEXT,             -- what the thesis adds beyond it
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL
 );
@@ -87,6 +89,8 @@ class StoredTopic:
     embedding: Optional[np.ndarray] = None
     passed_over: int = 0
     lit_review: Optional[dict] = None
+    closest_work: str = ""
+    whats_new: str = ""
 
 
 class TopicStore:
@@ -106,6 +110,8 @@ class TopicStore:
             ("passed_over", "INTEGER NOT NULL DEFAULT 0"),
             ("lit_review", "TEXT"),
             ("reviewed_at", "TEXT"),
+            ("closest_work", "TEXT"),
+            ("whats_new", "TEXT"),
         ]:
             if name not in have:
                 self.conn.execute(f"ALTER TABLE topics ADD COLUMN {name} {ddl}")
@@ -131,8 +137,8 @@ class TopicStore:
             cur = self.conn.execute(
                 """INSERT INTO topics (title, norm_title, research_question, rationale, method,
                    data_sources, source_urls, strategy_id, found_by, status, reason, judgements,
-                   mean_score, embedding, first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   mean_score, embedding, closest_work, whats_new, first_seen, last_seen)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     candidate.title,
                     normalize_title(candidate.title),
@@ -148,6 +154,8 @@ class TopicStore:
                     json.dumps({k: v.model_dump() for k, v in judgements.items()}),
                     mean,
                     embedding.astype(np.float32).tobytes() if embedding is not None else None,
+                    candidate.closest_work,
+                    candidate.whats_new,
                     now,
                     now,
                 ),
@@ -258,4 +266,6 @@ class TopicStore:
             embedding=emb,
             passed_over=r["passed_over"],
             lit_review=json.loads(r["lit_review"]) if r["lit_review"] else None,
+            closest_work=r["closest_work"] or "",
+            whats_new=r["whats_new"] or "",
         )

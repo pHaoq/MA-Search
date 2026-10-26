@@ -13,9 +13,10 @@ PROVIDERS = ["claude", "gemini", "openai"]
 ALL_PAIRS = {(p, s.id) for p in PROVIDERS for s in STRATEGIES}
 
 
-def topic(title, rq="How does it work?"):
+def topic(title, rq="How does it work?", whats_new="applies it to Austrian SMEs"):
     return TopicCandidate(title=title, research_question=rq, rationale="r", method="m",
-                          data_sources=["d"], source_urls=["https://x.org"])
+                          data_sources=["d"], source_urls=["https://x.org"],
+                          closest_work="Doe (2023)", whats_new=whats_new)
 
 
 def judgement(score, passes):
@@ -23,7 +24,7 @@ def judgement(score, passes):
                      passes=passes, reason="because")
 
 
-def test_rotation_covers_every_pair_in_six_rounds():
+def test_rotation_covers_every_pair_in_one_rotation():
     seen = set()
     for r in range(len(STRATEGIES)):
         jobs = assignments(r, PROVIDERS)
@@ -247,3 +248,97 @@ def test_truncated_claude_json_raises_provider_error_and_is_charged():
     except ProviderError:
         pass
     assert p.budget.spent_usd > 0
+
+
+class CountingJudge:
+    def __init__(self, name, j):
+        self.name, self.j, self.calls = name, j, 0
+
+    def judge(self, prompt):
+        self.calls += 1
+        return self.j
+
+
+def test_topic_without_a_stated_addition_fails_without_judging():
+    from thesis_finder.validator import Validator
+
+    j = CountingJudge("a", judgement(5, True))
+    v = Validator([j], Config().profile, 1, 3.5, find_related=lambda t, q: [])
+    verdict = v.validate(topic("Some topic", whats_new=""))
+    assert not verdict.valid and "no concrete contribution" in verdict.reason
+    assert j.calls == 0
+
+
+def test_third_judge_is_skipped_when_first_two_fail():
+    from thesis_finder.validator import Validator
+
+    judges = [CountingJudge("a", judgement(2, False)), CountingJudge("b", judgement(3, False)),
+              CountingJudge("c", judgement(5, True))]
+    v = Validator(judges, Config().profile, 2, 3.5, min_novelty=1, find_related=lambda t, q: [])
+    assert not v.validate(topic("Some topic")).valid
+    assert judges[2].calls == 0
+
+    judges = [CountingJudge("a", judgement(4, True)), CountingJudge("b", judgement(3, False)),
+              CountingJudge("c", judgement(5, True))]
+    v = Validator(judges, Config().profile, 2, 3.5, min_novelty=1, find_related=lambda t, q: [])
+    assert v.validate(topic("Some topic")).valid
+    assert judges[2].calls == 1
+
+
+def test_prior_art_rejects_topic_that_is_already_published(tmp_path):
+    from thesis_finder.prior_art import PriorArtChecker
+    from thesis_finder.sources.openalex import Work
+
+    published = Work(title="Generative AI adoption in Austrian SMEs", year=2024, cited_by=12, doi=None,
+                     abstract="What drives generative AI adoption in Austrian SMEs")
+    other = Work(title="Blockchain in shipping", year=2023, cited_by=3, doi=None, abstract="Ports and ledgers")
+    cfg = Config(store_path=str(tmp_path / "t.db"))
+    loop = build_loop(cfg, demo=True)
+    loop.prior_art = PriorArtChecker(LocalEmbedder(), [lambda q: [other, published]], cutoff=0.8)
+    judge = CountingJudge("a", judgement(5, True))
+    loop.validator.judges = [judge]
+
+    cand = topic("Generative AI adoption in Austrian SMEs", "What drives generative AI adoption in Austrian SMEs?")
+    verdict = loop._validate(cand, None)
+    assert not verdict.valid and verdict.reason.startswith("already done: Generative AI adoption")
+    assert judge.calls == 0
+
+    fresh = topic("Process mining for ESG reporting", "Can process mining make ESG reporting auditable?")
+    assert loop._validate(fresh, None).valid
+    assert judge.calls == 1
+
+
+def test_fresh_window_start():
+    from datetime import date
+    from thesis_finder.prompts import fresh_since
+
+    assert fresh_since(18, date(2026, 10, 26)) == "April 2025"
+    assert fresh_since(12, date(2026, 1, 5)) == "January 2025"
+
+
+def test_flex_halves_token_cost_but_not_search_fees():
+    budget = Budget(10)
+    cost = budget.charge("openai", "gpt-6.1-sol", input_tokens=1_000_000, output_tokens=100_000, searches=10,
+                         token_factor=0.5)
+    assert abs(cost - (1.5 + 0.1)) < 1e-9
+
+
+def test_openai_falls_back_to_standard_when_flex_has_no_capacity():
+    import httpx
+    import openai
+    from thesis_finder.config import ModelConfig
+    from thesis_finder.providers.openai_provider import OpenAIProvider
+
+    calls = []
+
+    def method(**kwargs):
+        calls.append(kwargs.get("service_tier"))
+        if kwargs.get("service_tier") == "flex":
+            resp = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+            raise openai.RateLimitError("Resource unavailable", response=resp, body=None)
+        return "ok"
+
+    p = OpenAIProvider.__new__(OpenAIProvider)
+    p.models, p.budget = ModelConfig(), Budget(10)
+    assert p._create(method, True, model="m") == "ok"
+    assert calls == ["flex", None]

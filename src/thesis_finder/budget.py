@@ -41,6 +41,7 @@ SEARCH_FEES: Dict[str, float] = {
 # Prompt-cache tokens, as a multiple of the input price
 CACHE_WRITE_FACTOR = 1.25
 CACHE_READ_FACTOR = 0.10
+FLEX_FACTOR = 0.5  # OpenAI and Gemini flex processing: half the token price
 
 LOG_FIELDS = ["time", "provider", "model", "purpose", "input_tokens", "output_tokens",
               "cache_write_tokens", "cache_read_tokens", "searches", "usd"]
@@ -70,6 +71,7 @@ class Budget:
         cache_write_tokens: int = 0,
         cache_read_tokens: int = 0,
         purpose: str = "",
+        token_factor: float = 1.0,
     ) -> float:
         in_price, out_price = self.prices.get(model, (0.0, 0.0))
         cost = (
@@ -77,7 +79,7 @@ class Budget:
             + cache_write_tokens * in_price * CACHE_WRITE_FACTOR
             + cache_read_tokens * in_price * CACHE_READ_FACTOR
             + output_tokens * out_price
-        ) / 1e6
+        ) / 1e6 * token_factor  # 0.5 for flex processing; search fees are not discounted
         cost += searches * SEARCH_FEES.get(provider, 0.0)
         with self._lock:
             self.spent_usd += cost

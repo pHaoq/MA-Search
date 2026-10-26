@@ -1,7 +1,7 @@
 # MA Search: thesis topic finder
 
 A multi-agent loop that hunts for master thesis **topics** (themes, not job positions).
-Claude, Gemini and GPT each run deep web searches, rotating over six source strategies.
+Claude, Gemini and GPT each run deep web searches, rotating over seven source strategies.
 Every topic they find is checked against a local store, and only new ones get validated
 by all three models and saved as **valid** or **invalid** (with the reason). The loop keeps
 going until a stop rule is met.
@@ -18,13 +18,18 @@ Each round:
    - Gemini: Deep Research agent (`deep-research-preview-04-2026`, Interactions API)
    - Claude: Opus 5.5 with the web search and web fetch tools
    - GPT: GPT-6.1 Sol with the web search tool, high reasoning effort, background mode
-3. **Extract.** Claude Haiku 5.5 turns each report into structured topic records.
+3. **Extract.** Claude Haiku 5.5 turns each report into structured topic records, including the
+   closest existing paper and what the thesis adds beyond it.
 4. **Dedup.** Exact title match, then meaning match via embeddings. Borderline cases go to
    Claude Haiku ("same topic?"). Duplicates are skipped and their `times_seen` counter goes up.
-5. **Validate.** OpenAlex finds the closest existing papers, then each model scores the
-   topic (novelty, feasibility, data access, demand, fit). Valid = at least 2 of 3 pass and
-   the mean score is at least 3.5.
-6. **Store** in SQLite (`data/topics.db`), then check the stop rules.
+5. **Prior-art check (free).** OpenAlex and Semantic Scholar return the closest papers; if one is
+   too similar (embedding similarity at least `prior_art_cutoff`), the topic is stored as invalid
+   with "already done: <paper>", and no judge is paid.
+6. **Validate.** A topic that does not say what it adds beyond existing work fails right away.
+   Otherwise the judges score it (novelty, feasibility, data access, demand, fit), with the
+   closest papers in front of them. Valid = at least 2 of 3 pass and the mean is at least 3.5.
+   The third judge is only asked when the first two leave the verdict open.
+7. **Store** in SQLite (`data/topics.db`), then check the stop rules.
 
 ### Statuses and the review step
 
@@ -35,7 +40,7 @@ Each round:
 | `checked` | Ranked into the top picks by the strongest model and passed a literature review |
 | `parked` | Valid, but not picked in `park_after` reviews in a row |
 
-Every `every_rounds` rounds (default 6) and at the end of a run, the review step runs:
+Every `every_rounds` rounds (default 7) and at the end of a run, the review step runs:
 Claude Fable 5.1 compares all valid topics side by side and picks the top `top_k` (default 5).
 Each pick gets a literature review (Claude Sonnet 5.5 with web search, plus OpenAlex): is the
 question already answered, is the gap real, is there enough literature, is the data reachable?
@@ -47,7 +52,26 @@ whether the topic is a top-10% master thesis; a topic needs a mean score of at l
 novelty of at least 3 from every judge. If almost everything fails, run
 `thesis-finder list --status invalid` to see the reasons, and lower `min_mean_score` if needed.
 
-### The six strategies
+### Originality
+
+Topics that just rephrase an older paper are filtered in four places:
+
+- **Fresh sources.** Briefs only allow calls, agendas, funded projects and job ads from the last
+  `fresh_months` (18), and starting papers from `paper_from_year` (2024) on.
+- **What's new.** Every topic must name its closest existing paper and what it adds (a new
+  context, method, data or population). No stated addition: invalid, without a judge call.
+  Judges score novelty on that addition, and a rephrased paper scores 1 or 2.
+- **Prior-art check.** See step 5. Run `thesis-finder run -v` to see each topic's similarity to
+  its closest paper; raise `prior_art_cutoff` if good topics are rejected as "already done",
+  lower it if copies slip through.
+- **Combine strategy.** Strategy 6 builds topics from combinations that have not been published:
+  a gap plus a contradiction, a known finding in a new context, or two of your interests.
+
+What helps most is a specific profile: `seed_papers` (3-5 papers you liked), `data_access`
+(data or field access only you have), `target_chair` (the chair you aim for and its focus), and
+specific interests and methods. The agents use these to find topics only you can do.
+
+### The seven strategies
 
 | # | Strategy | Where it looks |
 |---|----------|----------------|
@@ -57,6 +81,7 @@ novelty of at least 3 from every judge. If almost everything fails, run
 | 3 | Find contradictions | Reviews and papers with conflicting results (+ OpenAlex seeds) |
 | 4 | Funded project databases | CORDIS, FFG, DFG GEPRIS |
 | 5 | Industry job postings | Austrian and German job boards, skill-gap reports |
+| 6 | Combine gaps and contexts | Recent "future research" sections, Austrian/EU reports, your interests (+ OpenAlex seeds) |
 
 Edit them in `src/thesis_finder/strategies.py`.
 
@@ -72,7 +97,7 @@ Whichever comes first:
   `saturation_new_ratio` (default 10%) of found topics are new.
 
 Target and saturation only count once every model has tried every strategy at least once
-(3 models x 6 strategies = 18 pairs, covered in 6 rounds). The store is kept between runs,
+(3 models x 7 strategies = 21 pairs, covered in 7 rounds). The store is kept between runs,
 so a later run continues where the last one stopped. Press Ctrl+C to stop early; everything
 found so far is saved.
 
@@ -142,6 +167,24 @@ What drives Claude's cost:
 - **Extraction and duplicate checks** use Haiku 5.5 and are cheap.
 - **Planning** is a free template by default; `planner: claude` adds one Claude call per search.
 
+Built-in savings that keep the same models:
+
+- **Flex processing** (`cost.flex_search`, on by default): OpenAI and Gemini deep searches run at
+  half the token price. They may queue for a few minutes, which barely shows on searches that
+  already take several. When flex has no capacity, the call runs at standard price. Search fees
+  are not discounted. `cost.flex_judge: true` halves judge cost too, but each topic can then wait
+  minutes, so rounds get much slower.
+- **Free filters before paid judges**: duplicates, topics without a stated addition, and topics
+  the prior-art check finds already published never reach a judge.
+- **Early exit**: when the first two judges both fail a topic (or one scores novelty too low),
+  the third is not asked. Most topics fail, so this saves about a third of judge calls.
+- **Cached input**: OpenAI's discounted cached tokens are now billed as such in the cost log.
+
+Not used, and why: the 50% Batch APIs return results in minutes to hours and do not support
+Claude's refusal fallback, which does not fit a loop that judges each topic before moving on;
+Claude prompt caching already applies inside deep searches (you see it as cache tokens in the
+cost log), and the other prompts are too short and too different to cache.
+
 Every API call is written to `data/costs.csv`; run `thesis-finder costs` to see where the
 money went. To spend less on Claude, set `providers: [gemini, openai]` so Claude only
 coordinates (it still extracts topics, cheaply), or lower `claude_search` further.
@@ -165,15 +208,16 @@ The tests use fake providers and run offline.
 src/thesis_finder/
   cli.py          command line and wiring
   loop.py         the loop, rotation and stop rules
-  strategies.py   the six source strategies
+  strategies.py   the seven source strategies
   prompts.py      all prompt text
   providers/      claude.py, gemini.py, openai_provider.py, fake.py
   dedup.py        exact + embedding duplicate check
-  validator.py    3-model scoring
+  validator.py    3-model scoring with early exit
+  prior_art.py    OpenAlex + Semantic Scholar check for already-published topics
   review.py       ranking + literature review: valid -> checked
   store.py        SQLite topic store
   embeddings.py   OpenAI, Gemini or local embeddings
-  sources/openalex.py  scholarly search for seeds and the novelty check
+  sources/        openalex.py and semantic_scholar.py: free scholarly search
   budget.py       spend tracking
   report.py       Markdown shortlist
 ```

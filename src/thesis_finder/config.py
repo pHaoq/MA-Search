@@ -53,6 +53,26 @@ class LoopConfig(BaseModel):
     planner: str = "template"
 
 
+class CostConfig(BaseModel):
+    """Ways to pay less for the same models."""
+
+    # Flex processing for OpenAI and Gemini: half the token price in exchange for slower answers
+    # (queued for up to ~15 minutes). Falls back to standard when flex has no capacity.
+    flex_search: bool = True  # deep searches already take minutes, so the wait barely shows
+    flex_judge: bool = False  # judges run one topic at a time; flex would make rounds much slower
+
+
+class OriginalityConfig(BaseModel):
+    """Checks that keep the agents away from topics that are already done."""
+
+    # Prior-art check: OpenAlex and Semantic Scholar papers vs. the topic, by embedding similarity.
+    # At or above the cutoff the topic is rejected as already done, before any judge is paid.
+    prior_art_check: bool = True
+    prior_art_cutoff: float = 0.82  # tune after a run: `run -v` logs each similarity
+    fresh_months: int = 18  # calls, agendas, projects and job ads must be this recent
+    paper_from_year: int = 2024  # OpenAlex starting papers from this year on (not for "replicate")
+
+
 class DedupConfig(BaseModel):
     duplicate_threshold: float = 0.88  # cosine similarity at or above: same topic
     borderline_threshold: float = 0.78  # between the two: ask Claude Haiku
@@ -67,7 +87,7 @@ class ValidationConfig(BaseModel):
 class ReviewConfig(BaseModel):
     """The step that promotes valid topics to checked."""
 
-    every_rounds: int = 6  # one full rotation: every provider has tried every strategy
+    every_rounds: int = 7  # one full rotation: every provider has tried every strategy
     at_end_of_run: bool = True
     top_k: int = 5
     park_after: int = 3  # a valid topic passed over in this many reviews is parked
@@ -82,6 +102,8 @@ class Config(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
+    originality: OriginalityConfig = Field(default_factory=OriginalityConfig)
+    cost: CostConfig = Field(default_factory=CostConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     store_path: str = "data/topics.db"

@@ -12,10 +12,11 @@ from .budget import Budget
 from .config import Config
 from .dedup import Deduper
 from .models import CandidateList, ResearchResult, TopicCandidate
+from .prior_art import PriorArtChecker
 from .providers.base import Provider
 from .sources.openalex import Work, search_works
 from .store import TopicStore
-from .validator import Validator
+from .validator import Validator, Verdict
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class TopicLoop:
         validator: Validator,
         seed_search=search_works,
         review_step=None,
+        prior_art: Optional[PriorArtChecker] = None,
     ):
         self.cfg = cfg
         self.store = store
@@ -94,6 +96,7 @@ class TopicLoop:
         self.validator = validator
         self.seed_search = seed_search
         self.review_step = review_step
+        self.prior_art = prior_art
 
     def run(self, max_rounds: Optional[int] = None) -> str:
         if max_rounds is not None:
@@ -180,11 +183,12 @@ class TopicLoop:
         try:
             seeds = self._seed_papers(strategy)
             n = self.cfg.loop.topics_per_report
+            since = prompts.fresh_since(self.cfg.originality.fresh_months)
             if self.cfg.loop.planner == "claude":
                 brief = self.coordinator.plan(
-                    prompts.planner_prompt(self.cfg.profile, strategy, provider, avoid, seeds, n))
+                    prompts.planner_prompt(self.cfg.profile, strategy, provider, avoid, seeds, n, since))
             else:
-                brief = prompts.template_brief(self.cfg.profile, strategy, avoid, seeds, n)
+                brief = prompts.template_brief(self.cfg.profile, strategy, avoid, seeds, n, since)
             return self.searchers[provider].deep_search(brief, prompts.deep_search_system(), strategy_id)
         except Exception as exc:
             return ResearchResult(provider=provider, strategy_id=strategy_id, text="", error=str(exc))
@@ -194,9 +198,13 @@ class TopicLoop:
             return []
         profile = self.cfg.profile
         query = " ".join([profile.field, *profile.interests[:3], strategy.openalex_hint]).strip()
-        sort = "cited_by_count:desc" if strategy.id == 2 else None
+        # "Replicate or transfer" starts from well-cited papers, which are older by nature; the
+        # other strategies only get recent papers, so the agents build on what is still open.
+        replicate = strategy.id == 2
+        sort = "cited_by_count:desc" if replicate else None
+        from_year = 2018 if replicate else self.cfg.originality.paper_from_year
         try:
-            return self.seed_search(query, limit=8, sort=sort, from_year=2019)
+            return self.seed_search(query, limit=8, sort=sort, from_year=from_year)
         except Exception as exc:
             log.warning("OpenAlex seed search failed: %s", exc)
             return []
@@ -230,7 +238,7 @@ class TopicLoop:
                 self.store.mark_seen(check.duplicate_of.id)
                 log.debug("Duplicate (%.2f): %s ~ %s", check.similarity, cand.title, check.duplicate_of.title)
                 continue
-            verdict = self.validator.validate(cand)
+            verdict = self._validate(cand, check.embedding)
             self.store.add_topic(
                 cand,
                 status="valid" if verdict.valid else "invalid",
@@ -246,3 +254,13 @@ class TopicLoop:
             if self.budget.exhausted:
                 break
         return len(candidates), new, valid
+
+    def _validate(self, cand: TopicCandidate, embedding):
+        """Prior-art check first (free), then the judges."""
+        if not self.prior_art:
+            return self.validator.validate(cand)
+        found = self.prior_art.check(cand, embedding)
+        if found.already_done(self.prior_art.cutoff):
+            w = found.closest
+            return Verdict(False, f"already done: {w.title} ({w.year}) {w.doi or ''}".strip(), {})
+        return self.validator.validate(cand, related=found.papers)

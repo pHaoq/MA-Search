@@ -22,6 +22,8 @@ def _topic_lines(rank: int, t: StoredTopic) -> List[str]:
         f"- Data: {', '.join(t.data_sources)}",
         f"- Why it is open: {t.rationale}",
     ]
+    if t.whats_new:
+        lines.append(f"- Adds beyond {t.closest_work or 'existing work'}: {t.whats_new}")
     if t.lit_review:
         lines.append(f"- Literature review: {t.lit_review.get('summary', '')}")
         refs = t.lit_review.get("key_references") or []

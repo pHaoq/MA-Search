@@ -14,8 +14,11 @@ from .config import Config, load_config
 from .dedup import Deduper
 from .embeddings import LocalEmbedder, make_embedder
 from .loop import TopicLoop
+from .prior_art import PriorArtChecker
 from .report import markdown_report
 from .review import ReviewStep
+from .sources.openalex import search_works
+from .sources.semantic_scholar import search_papers
 from .store import TopicStore
 from .validator import Validator
 
@@ -56,11 +59,13 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
         elif name == "gemini":
             from .providers.gemini import GeminiProvider
 
-            searchers.append(GeminiProvider(cfg.models, budget))
+            searchers.append(GeminiProvider(cfg.models, budget, flex_search=cfg.cost.flex_search,
+                                               flex_judge=cfg.cost.flex_judge))
         elif name == "openai":
             from .providers.openai_provider import OpenAIProvider
 
-            searchers.append(OpenAIProvider(cfg.models, budget))
+            searchers.append(OpenAIProvider(cfg.models, budget, flex_search=cfg.cost.flex_search,
+                                               flex_judge=cfg.cost.flex_judge))
         else:
             sys.exit(f"Unknown provider in config: {name}")
 
@@ -72,7 +77,15 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
     validator = Validator(searchers, cfg.profile, cfg.validation.min_pass_votes, cfg.validation.min_mean_score,
                           cfg.validation.min_novelty)
     review = ReviewStep(cfg, store, budget, claude)
-    return TopicLoop(cfg, store, budget, searchers, claude, deduper, validator, review_step=review)
+    prior_art = None
+    if cfg.originality.prior_art_check:
+        prior_art = PriorArtChecker(
+            embedder,
+            [lambda q: search_works(q[:300], limit=12), lambda q: search_papers(q, limit=10)],
+            cfg.originality.prior_art_cutoff,
+        )
+    return TopicLoop(cfg, store, budget, searchers, claude, deduper, validator, review_step=review,
+                     prior_art=prior_art)
 
 
 def main(argv: list[str] | None = None) -> None:

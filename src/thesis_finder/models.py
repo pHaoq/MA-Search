@@ -18,6 +18,10 @@ class Profile(BaseModel):
     methods: List[str] = Field(default_factory=list)
     languages: List[str] = Field(default_factory=lambda: ["English", "German"])
     timeframe_months: int = 6
+    # Papers you liked: the agents look for topics in their spirit, building on them, not copying them.
+    seed_papers: List[str] = Field(default_factory=list)
+    data_access: str = ""  # data or field access only you have (employer, internship, club, family business)
+    target_chair: str = ""  # the chair or supervisor you aim for and their research focus
     notes: str = ""
 
     def as_text(self) -> str:
@@ -29,6 +33,13 @@ class Profile(BaseModel):
             f"Languages: {', '.join(self.languages)}",
             f"Time for the thesis: about {self.timeframe_months} months, one person",
         ]
+        if self.data_access:
+            lines.append(f"Data or field access I have: {self.data_access}")
+        if self.target_chair:
+            lines.append(f"Chair or supervisor I aim for: {self.target_chair}")
+        if self.seed_papers:
+            lines.append("Papers I liked (find topics in this spirit that go beyond them, never repeat them):")
+            lines += [f"  - {paper}" for paper in self.seed_papers]
         if self.notes:
             lines.append(f"Notes: {self.notes}")
         return "\n".join(lines)
@@ -43,6 +54,12 @@ class TopicCandidate(BaseModel):
     method: str = Field(description="A realistic method for a master thesis")
     data_sources: List[str] = Field(description="Where the data would come from")
     source_urls: List[str] = Field(description="URLs from the report that support this topic")
+    closest_work: str = Field(default="", description="The closest existing paper or project: authors, year, title")
+    whats_new: str = Field(
+        default="",
+        description="What this thesis adds beyond the closest work: a new context, method, data or population. "
+                    "Empty if the report does not say.",
+    )
 
 
 class CandidateList(BaseModel):

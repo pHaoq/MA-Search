@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 from . import prompts
 from .models import Judgement, Profile, TopicCandidate
@@ -39,18 +39,19 @@ class Validator:
         self.min_novelty = min_novelty
         self.find_related = find_related
 
-    def validate(self, topic: TopicCandidate) -> Verdict:
-        related = self.find_related(topic.title, topic.research_question)
+    def validate(self, topic: TopicCandidate, related: Optional[List[Work]] = None) -> Verdict:
+        if not topic.whats_new.strip():
+            return Verdict(False, "no concrete contribution: it does not say what it adds beyond existing work", {})
+        if related is None:
+            related = self.find_related(topic.title, topic.research_question)
         prompt = prompts.judge_prompt(self.profile, topic, related, self.profile.timeframe_months)
 
-        judgements: Dict[str, Judgement] = {}
-        with ThreadPoolExecutor(max_workers=len(self.judges)) as pool:
-            futures = {pool.submit(j.judge, prompt): j.name for j in self.judges}
-            for future, name in futures.items():
-                try:
-                    judgements[name] = future.result()
-                except Exception as exc:  # one failing judge should not stop the loop
-                    log.warning("Judge %s failed: %s", name, exc)
+        # Ask the first judges; ask the rest only if the verdict is still open. Most topics fail,
+        # and when the first judges already sink one, the remaining calls are money for nothing.
+        first = max(1, self.min_pass_votes)
+        judgements = self._ask(self.judges[:first], prompt)
+        if self.judges[first:] and not self._decided(judgements):
+            judgements.update(self._ask(self.judges[first:], prompt))
 
         if not judgements:
             return Verdict(False, "no judge could score it", judgements)
@@ -68,3 +69,21 @@ class Validator:
         failing = [j for j in judgements.values() if not j.passes] or list(judgements.values())
         worst = min(failing, key=lambda j: j.mean)
         return Verdict(False, worst.reason, judgements)
+
+    def _decided(self, judgements: Dict[str, Judgement]) -> bool:
+        """True when the remaining judges cannot make the topic valid."""
+        if any(j.novelty < self.min_novelty for j in judgements.values()):
+            return True
+        fails = sum(1 for j in judgements.values() if not j.passes)
+        return len(self.judges) - fails < self.min_pass_votes
+
+    def _ask(self, judges: List[Provider], prompt: str) -> Dict[str, Judgement]:
+        judgements: Dict[str, Judgement] = {}
+        with ThreadPoolExecutor(max_workers=max(1, len(judges))) as pool:
+            futures = {pool.submit(j.judge, prompt): j.name for j in judges}
+            for future, name in futures.items():
+                try:
+                    judgements[name] = future.result()
+                except Exception as exc:  # one failing judge should not stop the loop
+                    log.warning("Judge %s failed: %s", name, exc)
+        return judgements

@@ -1,4 +1,4 @@
-"""The six ways of finding a thesis topic. Each deep-search agent gets one per round."""
+"""The seven ways of finding a thesis topic. Each deep-search agent gets one per round."""
 
 from __future__ import annotations
 
@@ -89,6 +89,23 @@ STRATEGIES: List[Strategy] = [
             "Job boards in Austria and Germany (karriere.at, AMS, Bundesagentur fuer Arbeit, StepStone, "
             "LinkedIn public listings) and industry reports on skill gaps."
         ),
+    ),
+    Strategy(
+        id=6,
+        name="Combine gaps and contexts",
+        goal=(
+            "Create original topics by combining things that have not been combined yet: a gap named in a "
+            "recent paper with a contradiction from another stream, a known finding with a new context "
+            "(Austria or DACH, SMEs, the public sector, one specific industry), or two of the student's "
+            "interests. Check that the combination has not been published, and say why it matters now."
+        ),
+        where_to_look=(
+            "Recent 'future research' sections and literature reviews (last two years), Austrian and EU "
+            "reports on SMEs, industry and the public sector (WKO, Statistik Austria, Eurostat), and the "
+            "student's interests and seed papers."
+        ),
+        use_openalex=True,
+        openalex_hint="future research directions",
     ),
 ]
 

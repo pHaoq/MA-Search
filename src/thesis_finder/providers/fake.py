@@ -55,7 +55,9 @@ class FakeCoordinator:
         topics = []
         for title, rq in re.findall(r"TOPIC: (.*?) \| (.*)", prompt):
             topics.append(TopicCandidate(title=title, research_question=rq, rationale="demo", method="survey",
-                                         data_sources=["demo"], source_urls=["https://example.org/source"]))
+                                         data_sources=["demo"], source_urls=["https://example.org/source"],
+                                         closest_work="Doe (2023) Demo paper",
+                                         whats_new="moves the question to Austrian SMEs"))
         return CandidateList(topics=topics)
 
     def same_topic(self, prompt: str) -> bool:
