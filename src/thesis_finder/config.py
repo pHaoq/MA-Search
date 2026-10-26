@@ -60,7 +60,7 @@ class DedupConfig(BaseModel):
 
 class ValidationConfig(BaseModel):
     min_pass_votes: int = 2
-    min_mean_score: float = 4.0
+    min_mean_score: float = 3.5
     min_novelty: int = 3  # every judge must give at least this novelty score
 
 

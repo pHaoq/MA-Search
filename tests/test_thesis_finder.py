@@ -201,3 +201,49 @@ def test_store_migrates_old_database(tmp_path):
     conn.close()
     store = TopicStore(str(path))
     assert store.all_topics()[0].passed_over == 0
+
+
+def test_long_report_is_split_when_extraction_fails(tmp_path):
+    from thesis_finder.models import CandidateList
+    from thesis_finder.providers.fake import FakeCoordinator
+
+    class Fussy(FakeCoordinator):
+        def extract(self, prompt):
+            if prompt.count("TOPIC:") > 4:
+                raise RuntimeError("cut off")
+            return super().extract(prompt)
+
+    cfg = Config(store_path=str(tmp_path / "t.db"))
+    loop = build_loop(cfg, demo=True)
+    loop.coordinator = Fussy()
+    report = "\n".join(f"TOPIC: Topic {i} | Question {i}?" for i in range(6))
+    from thesis_finder.strategies import get
+    topics = loop._extract(report, get(0))
+    assert len(topics) == 6
+
+
+def test_truncated_claude_json_raises_provider_error_and_is_charged():
+    import json
+    import anthropic
+    import httpx2
+    from thesis_finder.config import ClaudeSearchConfig, ModelConfig
+    from thesis_finder.providers.base import ProviderError
+    from thesis_finder.providers.claude import ClaudeProvider
+
+    def handler(req):
+        body = json.loads(req.content)
+        return httpx2.Response(200, json={
+            "id": "m", "type": "message", "role": "assistant", "model": body["model"],
+            "content": [{"type": "text", "text": '{"topics": [{"title": "cut'}],
+            "stop_reason": "max_tokens", "stop_sequence": None,
+            "usage": {"input_tokens": 10, "output_tokens": 16000}})
+
+    p = ClaudeProvider.__new__(ClaudeProvider)
+    p.client = anthropic.Anthropic(api_key="x", http_client=httpx2.Client(transport=httpx2.MockTransport(handler)))
+    p.models, p.budget, p.search = ModelConfig(), Budget(10), ClaudeSearchConfig()
+    try:
+        p.extract("report " * 100)
+        raise AssertionError("expected ProviderError")
+    except ProviderError:
+        pass
+    assert p.budget.spent_usd > 0

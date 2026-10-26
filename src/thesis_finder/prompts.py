@@ -92,10 +92,11 @@ def deep_search_system() -> str:
     )
 
 
-def extract_prompt(report: str, strategy: Strategy) -> str:
+def extract_prompt(report: str, strategy: Strategy, max_topics: int = 8) -> str:
     return f"""Below is a research report written for the strategy "{strategy.name}".
-Extract every distinct candidate master thesis topic it proposes or clearly implies.
-Keep the report's source URLs with the topic they support. Do not invent topics or URLs.
+Extract the distinct candidate master thesis topics it proposes, at most {max_topics}, the strongest first.
+Keep every field short: rationale at most two sentences, method and each data source one short phrase,
+at most 3 source URLs per topic, taken from the report. Do not invent topics or URLs.
 
 REPORT:
 {report}"""

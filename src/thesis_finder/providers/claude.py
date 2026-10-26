@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import List, Type, TypeVar
 
 import anthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ..budget import Budget
 from ..config import ClaudeSearchConfig, ModelConfig
@@ -87,7 +87,7 @@ class ClaudeProvider(Provider):
 
     def extract(self, prompt: str) -> CandidateList:
         return self._parse(self.models.claude_fast, prompt, CandidateList, fallback=False, max_tokens=16000,
-                           purpose="extract")
+                           purpose="extract", effort="low")
 
     def same_topic(self, prompt: str) -> bool:
         return self._parse(self.models.claude_fast, prompt, SameTopic, fallback=False, max_tokens=256,
@@ -107,17 +107,25 @@ class ClaudeProvider(Provider):
         return self._parse(self.models.claude_reviewer, prompt, LitReview, fallback=True, purpose="review")
 
     def _parse(self, model: str, prompt: str, schema: Type[T], *, fallback: bool, max_tokens: int = 8000,
-               purpose: str = "") -> T:
+               purpose: str = "", effort: str | None = None) -> T:
         kwargs = {}
         if fallback:
             kwargs = {"fallbacks": "default", "betas": [FALLBACK_BETA]}
-        response = self.client.beta.messages.parse(
-            model=model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-            output_format=schema,
-            **kwargs,
-        )
+        if effort:
+            kwargs["output_config"] = {"effort": effort}
+        try:
+            response = self.client.beta.messages.parse(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+                output_format=schema,
+                **kwargs,
+            )
+        except ValidationError as exc:
+            # Usually the answer hit max_tokens and the JSON was cut off. The SDK raises before
+            # we see the usage, so charge an estimate to keep the budget honest.
+            self.budget.charge(self.name, model, len(prompt) // 4, max_tokens, purpose=purpose)
+            raise ProviderError(f"Claude's {schema.__name__} was cut off or malformed") from exc
         self._charge(model, response.usage, purpose)
         if response.stop_reason == "refusal" or response.parsed_output is None:
             raise ProviderError(f"Claude returned no {schema.__name__} (stop_reason={response.stop_reason})")

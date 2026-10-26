@@ -42,8 +42,10 @@ question already answered, is the gap real, is there enough literature, is the d
 Pass: `checked`, with the review summary and key references saved. Fail: back to `invalid`.
 A review costs roughly $3-6. Run it by hand with `thesis-finder review`.
 
-The first screening is strict on purpose: a mean judge score of at least 4.0, novelty of at
-least 3 from every judge, and judges are asked whether the topic is a top-10% master thesis.
+The first screening is strict on purpose: judges are told a typical proposal scores 3 and asked
+whether the topic is a top-10% master thesis; a topic needs a mean score of at least 3.5 and
+novelty of at least 3 from every judge. If almost everything fails, run
+`thesis-finder list --status invalid` to see the reasons, and lower `min_mean_score` if needed.
 
 ### The six strategies
 

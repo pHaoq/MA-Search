@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
-    for noisy in ("httpx", "anthropic", "openai", "google_genai"):
+    for noisy in ("httpx", "httpx2", "httpcore", "anthropic", "openai", "google_genai"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     cfg = load_config(args.config)

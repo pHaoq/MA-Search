@@ -11,7 +11,7 @@ from . import prompts, strategies
 from .budget import Budget
 from .config import Config
 from .dedup import Deduper
-from .models import CandidateList, ResearchResult
+from .models import CandidateList, ResearchResult, TopicCandidate
 from .providers.base import Provider
 from .sources.openalex import Work, search_works
 from .store import TopicStore
@@ -146,7 +146,11 @@ class TopicLoop:
                 continue
             any_success = True
             state.covered.add((result.provider, result.strategy_id))
-            found, new, valid = self._process(result)
+            try:
+                found, new, valid = self._process(result)
+            except Exception as exc:  # never lose the whole run to one bad report
+                log.warning("Skipping the %s report: %s", result.provider, exc)
+                continue
             found_total += found
             new_total += new
             state.new_this_run += new
@@ -197,9 +201,26 @@ class TopicLoop:
             log.warning("OpenAlex seed search failed: %s", exc)
             return []
 
+    def _extract(self, report: str, strategy: strategies.Strategy) -> List[TopicCandidate]:
+        """Extract topics; if a long report overflows the answer, split it in half and try each part."""
+        max_topics = self.cfg.loop.topics_per_report + 3
+        try:
+            return self.coordinator.extract(prompts.extract_prompt(report, strategy, max_topics)).topics
+        except Exception as exc:
+            log.warning("Extracting topics failed (%s); retrying in two halves.", exc)
+        cut = report.rfind("\n", 0, len(report) // 2)
+        cut = cut if cut > 0 else len(report) // 2
+        topics: List[TopicCandidate] = []
+        for part in (report[:cut], report[cut:]):
+            try:
+                topics += self.coordinator.extract(prompts.extract_prompt(part, strategy, max_topics)).topics
+            except Exception as exc:
+                log.warning("Skipping part of a %s report: %s", strategy.name, exc)
+        return topics
+
     def _process(self, result: ResearchResult) -> Tuple[int, int, int]:
         strategy = strategies.get(result.strategy_id)
-        candidates = self.coordinator.extract(prompts.extract_prompt(result.text, strategy)).topics
+        candidates = self._extract(result.text, strategy)
         new = valid = 0
         for cand in candidates:
             if not cand.source_urls:
