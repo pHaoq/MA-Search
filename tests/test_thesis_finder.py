@@ -342,3 +342,28 @@ def test_openai_falls_back_to_standard_when_flex_has_no_capacity():
     p.models, p.budget = ModelConfig(), Budget(10)
     assert p._create(method, True, model="m") == "ok"
     assert calls == ["flex", None]
+
+
+def test_openalex_query_is_short_keywords_and_retries_on_400(monkeypatch):
+    import httpx
+    from thesis_finder.sources import openalex
+
+    long = ("Cloud Exit-Readiness Analyser Based on Infrastructure-as-Code How can an artefact be designed "
+            "that derives an organisation's cloud lock-in and switching readiness?")
+    q = openalex.keyword_query(long)
+    assert len(q.split()) <= 10 and "?" not in q and "'" not in q
+    assert q.startswith("cloud exit readiness analyser infrastructure code")
+
+    sent = []
+
+    def fake_get(url, params, timeout):
+        sent.append(params["search"])
+        req = httpx.Request("GET", url)
+        if len(sent) == 1:
+            return httpx.Response(400, request=req)
+        return httpx.Response(200, request=req, json={"results": [{"display_name": "Paper", "publication_year": 2025}]})
+
+    monkeypatch.setattr(openalex.httpx, "get", fake_get)
+    works = openalex.search_works(long, limit=3)
+    assert [w.title for w in works] == ["Paper"]
+    assert len(sent) == 2 and len(sent[1].split()) == 4

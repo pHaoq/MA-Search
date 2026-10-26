@@ -81,7 +81,7 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
     if cfg.originality.prior_art_check:
         prior_art = PriorArtChecker(
             embedder,
-            [lambda q: search_works(q[:300], limit=12), lambda q: search_papers(q, limit=10)],
+            [lambda q: search_works(q, limit=12), lambda q: search_papers(q, limit=10)],
             cfg.originality.prior_art_cutoff,
         )
     return TopicLoop(cfg, store, budget, searchers, claude, deduper, validator, review_step=review,
@@ -134,7 +134,10 @@ def main(argv: list[str] | None = None) -> None:
             cfg.loop.budget_usd = args.budget
         if args.demo and cfg.store_path == "data/topics.db":
             cfg.store_path = "data/demo.db"
-        build_loop(cfg, demo=args.demo).review_step.run()
+        try:
+            build_loop(cfg, demo=args.demo).review_step.run()
+        except KeyboardInterrupt:
+            print("Review stopped. Topics reviewed so far are saved; the rest stay valid.")
         return
 
     if args.command == "costs":

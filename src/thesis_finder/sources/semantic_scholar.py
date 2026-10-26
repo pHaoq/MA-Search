@@ -8,7 +8,7 @@ from typing import List
 
 import httpx
 
-from .openalex import Work
+from .openalex import Work, keyword_query
 
 API = "https://api.semanticscholar.org/graph/v1/paper/search"
 
@@ -18,7 +18,7 @@ def search_papers(query: str, *, limit: int = 10, timeout: float = 30.0) -> List
     key = os.environ.get("SEMANTIC_SCHOLAR_API_KEY")
     if key:
         headers["x-api-key"] = key
-    params = {"query": query[:300], "limit": str(limit), "fields": "title,year,citationCount,externalIds,abstract"}
+    params = {"query": keyword_query(query, max_words=12), "limit": str(limit), "fields": "title,year,citationCount,externalIds,abstract"}
     resp = httpx.get(API, params=params, headers=headers, timeout=timeout)
     resp.raise_for_status()
     works = []

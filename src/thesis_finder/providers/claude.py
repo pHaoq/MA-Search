@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import List, Type, TypeVar
 
 import anthropic
@@ -14,10 +15,19 @@ from ..models import CandidateList, Judgement, LitReview, Ranking, ResearchBrief
 from .base import Provider, ProviderError, urls_in
 
 T = TypeVar("T", bound=BaseModel)
+log = logging.getLogger(__name__)
 
 # Server-side fallback on a refusal; routes by refusal category, no model list to maintain.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_CONTINUATIONS = 5
+
+
+def _log_tool_call(block) -> None:
+    args = block.input if isinstance(block.input, dict) else {}
+    if block.name == "web_search":
+        log.info("      searching: %s", args.get("query", ""))
+    elif block.name == "web_fetch":
+        log.info("      reading:   %s", args.get("url", ""))
 
 
 class ClaudeProvider(Provider):
@@ -40,7 +50,8 @@ class ClaudeProvider(Provider):
         messages: List[dict] = [{"role": "user", "content": brief}]
         content: list = []
         for _ in range(MAX_CONTINUATIONS + 1):
-            response = self.client.beta.messages.create(
+            # Streamed so each search and fetch shows up as it happens; a review can take minutes.
+            with self.client.beta.messages.stream(
                 model=model,
                 max_tokens=16000,
                 system=system,
@@ -49,7 +60,11 @@ class ClaudeProvider(Provider):
                 output_config={"effort": self.search.effort},
                 fallbacks="default",
                 betas=[FALLBACK_BETA],
-            )
+            ) as stream:
+                for event in stream:
+                    if event.type == "content_block_stop" and event.content_block.type == "server_tool_use":
+                        _log_tool_call(event.content_block)
+                response = stream.get_final_message()
             self._charge(model, response.usage, purpose)
             content.extend(response.content)
             if response.stop_reason == "refusal":

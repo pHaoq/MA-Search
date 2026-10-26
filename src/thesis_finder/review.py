@@ -39,9 +39,10 @@ class ReviewOutcome:
 
 def _related(title: str, question: str) -> List[Work]:
     try:
-        return search_works(f"{title} {question}"[:300], limit=10, from_year=2018)
+        return search_works(f"{title} {question}", limit=10, from_year=2018)
     except Exception as exc:
-        log.warning("OpenAlex search failed: %s", exc)
+        # The literature review still runs its own web search; OpenAlex is only a head start.
+        log.warning("OpenAlex search failed (%s); the review continues with web search only.", exc)
         return []
 
 
@@ -66,6 +67,7 @@ class ReviewStep:
         if len(pool) <= rc.top_k:
             picks = [t.id for t in pool]
         else:
+            log.info("Review: ranking %d valid topics with %s...", len(pool), self.cfg.models.claude_ranker)
             ranking = self.reviewer.rank(prompts.rank_prompt(self.cfg.profile, pool, rc.top_k))
             known = {t.id for t in pool}
             picks = []
@@ -75,11 +77,12 @@ class ReviewStep:
             picks = picks[: rc.top_k]
         log.info("Review: %d valid topics, reviewing the top %d.", len(pool), len(picks))
 
-        for topic_id in picks:
+        for n, topic_id in enumerate(picks, 1):
             if self.budget.exhausted:
                 log.info("Review: budget cap reached, the rest stay valid for the next review.")
                 break
             topic = self.store.get(topic_id)
+            log.info("  [%d/%d] Literature review: %s (takes a few minutes)", n, len(picks), topic.title)
             try:
                 report = self.reviewer.literature_review(
                     prompts.literature_brief(self.cfg.profile, topic, self.find_related(topic.title, topic.research_question)),
