@@ -1,0 +1,86 @@
+"""Load config.yaml (falls back to config.example.yaml defaults)."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import yaml
+from pydantic import BaseModel, Field
+
+from .models import Profile
+
+
+class ModelConfig(BaseModel):
+    claude_research: str = "claude-opus-5-5"
+    claude_planner: str = "claude-opus-5-5"
+    claude_judge: str = "claude-sonnet-5-5"
+    claude_fast: str = "claude-haiku-5-5"
+    gemini_agent: str = "deep-research-preview-04-2026"
+    gemini_judge: str = "gemini-4-argon"
+    openai_research: str = "gpt-6.1-sol"
+    openai_judge: str = "gpt-6.1-sol"
+
+
+class EmbeddingConfig(BaseModel):
+    # "openai", "gemini" or "local" (free, word-overlap only; fine for testing)
+    provider: str = "openai"
+    model: str = "text-embedding-3-small"
+
+
+class LoopConfig(BaseModel):
+    budget_usd: float = 20.0
+    target_valid: int = 40
+    saturation_rounds: int = 3
+    saturation_new_ratio: float = 0.10
+    max_rounds: int = 60
+    topics_per_report: int = 8
+
+
+class DedupConfig(BaseModel):
+    duplicate_threshold: float = 0.88  # cosine similarity at or above: same topic
+    borderline_threshold: float = 0.78  # between the two: ask Claude Haiku
+
+
+class ValidationConfig(BaseModel):
+    min_pass_votes: int = 2
+    min_mean_score: float = 3.5
+
+
+class Config(BaseModel):
+    profile: Profile = Field(default_factory=Profile)
+    providers: List[str] = Field(default_factory=lambda: ["claude", "gemini", "openai"])
+    models: ModelConfig = Field(default_factory=ModelConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    loop: LoopConfig = Field(default_factory=LoopConfig)
+    dedup: DedupConfig = Field(default_factory=DedupConfig)
+    validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    store_path: str = "data/topics.db"
+    # Override or add prices: {"model-id": [input_usd_per_1m, output_usd_per_1m]}
+    prices: Dict[str, List[float]] = Field(default_factory=dict)
+
+
+def load_dotenv(path: Path = Path(".env")) -> None:
+    """Minimal .env loader so we don't need python-dotenv."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if value.strip() and key.strip() not in os.environ:
+            os.environ[key.strip()] = value.strip()
+
+
+def load_config(path: Optional[str] = None) -> Config:
+    load_dotenv()
+    candidates = [Path(path)] if path else [Path("config.yaml"), Path("config.example.yaml")]
+    for candidate in candidates:
+        if candidate.exists():
+            data = yaml.safe_load(candidate.read_text()) or {}
+            return Config.model_validate(data)
+    if path:
+        raise FileNotFoundError(path)
+    return Config()

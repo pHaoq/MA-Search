@@ -1,0 +1,51 @@
+# Copy to config.yaml and edit. config.yaml is git-ignored.
+
+profile:
+  field: Information Systems
+  degree: Master
+  country: Austria
+  university: ""            # e.g. WU Wien, TU Wien, JKU Linz
+  interests: []             # e.g. [generative AI, process mining, digital platforms]
+  methods: []               # e.g. [survey, interviews, design science, data analysis]
+  languages: [English, German]
+  timeframe_months: 6
+  notes: ""                 # anything else: preferred chair, industry partner, things to avoid
+
+# Which providers deep-search and judge. Claude is always used as coordinator
+# (planning briefs, extracting topics, duplicate checks).
+providers: [claude, gemini, openai]
+
+models:
+  claude_research: claude-opus-5-5
+  claude_planner: claude-opus-5-5
+  claude_judge: claude-sonnet-5-5
+  claude_fast: claude-haiku-5-5
+  gemini_agent: deep-research-preview-04-2026   # or deep-research-max-preview-04-2026
+  gemini_judge: gemini-4-argon
+  openai_research: gpt-6.1-sol
+  openai_judge: gpt-6.1-sol
+
+embedding:
+  provider: openai          # openai | gemini | local (free, weaker)
+  model: text-embedding-3-small   # gemini: gemini-embedding-001
+
+loop:
+  budget_usd: 20            # hard cap per run
+  target_valid: 40          # stop once this many valid topics are stored
+  saturation_rounds: 3      # stop after this many rounds in a row with...
+  saturation_new_ratio: 0.10  # ...fewer than 10% new topics
+  max_rounds: 60
+  topics_per_report: 8      # topics each deep search is asked for
+
+dedup:
+  duplicate_threshold: 0.88
+  borderline_threshold: 0.78
+
+validation:
+  min_pass_votes: 2         # of the judges (one per provider)
+  min_mean_score: 3.5
+
+store_path: data/topics.db
+
+# prices:                   # override USD per 1M tokens [input, output]
+#   gemini-4-argon: [4.0, 20.0]
