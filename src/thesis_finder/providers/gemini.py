@@ -47,6 +47,7 @@ class GeminiProvider(Provider):
                 agent,
                 usage.total_input_tokens or 0,
                 (usage.total_output_tokens or 0) + (usage.total_thought_tokens or 0),
+                purpose="search",
             )
         if interaction.status != "completed":
             raise ProviderError(f"Gemini Deep Research ended with status {interaction.status}")
@@ -70,6 +71,7 @@ class GeminiProvider(Provider):
                 model,
                 meta.prompt_token_count or 0,
                 (meta.candidates_token_count or 0) + (meta.thoughts_token_count or 0),
+                purpose="judge",
             )
         if isinstance(response.parsed, Judgement):
             return response.parsed

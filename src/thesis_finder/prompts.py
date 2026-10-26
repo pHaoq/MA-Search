@@ -10,7 +10,7 @@ from .store import StoredTopic
 from .strategies import Strategy
 
 
-def avoid_block(valid: List[StoredTopic], invalid: List[StoredTopic], limit: int = 60) -> str:
+def avoid_block(valid: List[StoredTopic], invalid: List[StoredTopic], limit: int = 30) -> str:
     """Known topics, so the agents look elsewhere. Invalid ones carry their reason:
     the exact topic is off the table, but a neighbour that fixes the reason is welcome."""
     lines = []
@@ -56,6 +56,32 @@ Write a research brief for a deep-research agent ({provider}). The brief must:
 3. For each topic ask for: a title, one research question, why it is open (with source URLs), a feasible method, and where the data would come from.
 4. Ask the agent to cite a URL for every claim.
 Return only the brief."""
+
+
+def template_brief(
+    profile: Profile,
+    strategy: Strategy,
+    avoid: str,
+    seed_papers: List[Work],
+    topics_per_report: int,
+) -> str:
+    """A research brief built without an LLM call (planner: template)."""
+    seeds = "\n".join(w.short(200) for w in seed_papers)
+    seed_part = f"\nStarting papers from OpenAlex:\n{seeds}\n" if seeds else ""
+    return f"""Find candidate master thesis topics for this student.
+
+Student profile:
+{profile.as_text()}
+
+Strategy: {strategy.name}
+Goal: {strategy.goal}
+Where to look: {strategy.where_to_look}
+{seed_part}
+{avoid}
+
+Deliver {topics_per_report} distinct topics that fit the profile and are not in the lists above.
+For each: a title, one research question, why it is open (with source URLs), a feasible method,
+and where the data would come from. Cite a URL for every claim. Keep the report concise."""
 
 
 def deep_search_system() -> str:

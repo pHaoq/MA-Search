@@ -94,3 +94,25 @@ def test_demo_loop_runs_until_saturation(tmp_path):
     assert len(titles) == len(set(titles))  # nothing stored twice
     assert store.count() > 0
     assert any(t.times_seen > 1 for t in store.all_topics())  # rediscoveries were counted, not re-stored
+
+
+def test_budget_counts_cache_tokens_and_logs(tmp_path):
+    from thesis_finder.budget import summarize_log
+
+    log = tmp_path / "costs.csv"
+    budget = Budget(10, log_path=str(log))
+    cost = budget.charge("claude", "claude-sonnet-5-5", input_tokens=0, output_tokens=0,
+                         cache_write_tokens=1_000_000, cache_read_tokens=1_000_000, purpose="search")
+    assert abs(cost - (2.0 * 1.25 + 2.0 * 0.10)) < 1e-9
+    text = summarize_log(str(log))
+    assert "claude" in text and "search" in text and "Total: $2.70" in text
+
+
+def test_no_new_round_when_it_would_overshoot_budget():
+    cfg = Config()
+    budget = Budget(5)
+    budget.charge("claude", "claude-sonnet-5-5", output_tokens=300_000)  # $3 spent, $2 left
+    state = LoopState(round_costs=[3.0])
+    assert "nearly used" in stop_reason(state, cfg, PROVIDERS, budget)
+    state.round_costs = [1.0]
+    assert stop_reason(state, cfg, PROVIDERS, budget) is None

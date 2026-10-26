@@ -43,7 +43,8 @@ Edit them in `src/thesis_finder/strategies.py`.
 
 Whichever comes first:
 
-- **Budget cap**: the run has spent `budget_usd` (default $20). Always checked.
+- **Budget cap**: the run has spent `budget_usd` (default $5). Always checked, and a new
+  round is not started if the last rounds suggest it would overshoot the cap.
 - **Max rounds**: `max_rounds` (default 60).
 - **Target**: `target_valid` valid topics are stored (default 40).
 - **Saturation**: `saturation_rounds` rounds in a row (default 3) where fewer than
@@ -100,12 +101,27 @@ thesis-finder list --status valid
 thesis-finder list --status invalid
 thesis-finder report              # writes reports/shortlist.md
 thesis-finder runs                # past runs, spend and why each stopped
+thesis-finder costs               # spend by provider, job and model, from data/costs.csv
 ```
 
 To use fewer providers (for example Claude only while testing), set `providers: [claude]`
 in `config.yaml`. Claude is always used as the coordinator.
 
 ## Cost
+
+What drives Claude's cost:
+
+- **Deep search** (`claude_search` in the config). Every search result and fetched page is
+  added to Claude's context, and the whole context is billed again at each step of the
+  search. More searches and fetches, bigger pages and higher effort multiply the cost. The
+  defaults are Sonnet 5.5, 8 searches, 4 fetches, pages capped at 15,000 tokens, medium effort.
+- **Judging**: every new topic gets one Claude call (Sonnet 5.5) besides Gemini and GPT.
+- **Extraction and duplicate checks** use Haiku 5.5 and are cheap.
+- **Planning** is a free template by default; `planner: claude` adds one Claude call per search.
+
+Every API call is written to `data/costs.csv`; run `thesis-finder costs` to see where the
+money went. To spend less on Claude, set `providers: [gemini, openai]` so Claude only
+coordinates (it still extracts topics, cheaply), or lower `claude_search` further.
 
 Prices are in `src/thesis_finder/budget.py` (USD, October 2026) and can be overridden in
 `config.yaml`. The Gemini Deep Research agent has no published flat rate, so its price is an

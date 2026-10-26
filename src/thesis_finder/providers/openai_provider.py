@@ -44,7 +44,8 @@ class OpenAIProvider(Provider):
 
         searches = sum(1 for item in response.output if item.type == "web_search_call")
         if response.usage:
-            self.budget.charge(self.name, model, response.usage.input_tokens, response.usage.output_tokens, searches)
+            self.budget.charge(self.name, model, response.usage.input_tokens, response.usage.output_tokens, searches,
+                               purpose="search")
         if response.status != "completed":
             raise ProviderError(f"OpenAI deep search ended with status {response.status}")
 
@@ -66,7 +67,8 @@ class OpenAIProvider(Provider):
         model = self.models.openai_judge
         response = self.client.responses.parse(model=model, input=prompt, text_format=Judgement)
         if response.usage:
-            self.budget.charge(self.name, model, response.usage.input_tokens, response.usage.output_tokens)
+            self.budget.charge(self.name, model, response.usage.input_tokens, response.usage.output_tokens,
+                               purpose="judge")
         if response.output_parsed is None:
             raise ProviderError("OpenAI returned no judgement")
         return response.output_parsed

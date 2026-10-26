@@ -13,7 +13,7 @@ from .models import Profile
 
 
 class ModelConfig(BaseModel):
-    claude_research: str = "claude-opus-5-5"
+    claude_research: str = "claude-sonnet-5-5"
     claude_planner: str = "claude-opus-5-5"
     claude_judge: str = "claude-sonnet-5-5"
     claude_fast: str = "claude-haiku-5-5"
@@ -29,13 +29,26 @@ class EmbeddingConfig(BaseModel):
     model: str = "text-embedding-3-small"
 
 
+class ClaudeSearchConfig(BaseModel):
+    """Limits for one Claude deep search. Every search result and fetched page is added to
+    the context and re-read on each step, so these numbers drive most of Claude's cost."""
+
+    max_searches: int = 8
+    max_fetches: int = 4
+    max_fetch_tokens: int = 15000  # cap on the size of one fetched page
+    effort: str = "medium"
+
+
 class LoopConfig(BaseModel):
-    budget_usd: float = 20.0
+    budget_usd: float = 5.0
     target_valid: int = 40
     saturation_rounds: int = 3
     saturation_new_ratio: float = 0.10
     max_rounds: int = 60
-    topics_per_report: int = 8
+    topics_per_report: int = 5
+    # "template": build research briefs from a fixed template (free).
+    # "claude": let Claude write each brief (one extra Claude call per search).
+    planner: str = "template"
 
 
 class DedupConfig(BaseModel):
@@ -52,11 +65,13 @@ class Config(BaseModel):
     profile: Profile = Field(default_factory=Profile)
     providers: List[str] = Field(default_factory=lambda: ["claude", "gemini", "openai"])
     models: ModelConfig = Field(default_factory=ModelConfig)
+    claude_search: ClaudeSearchConfig = Field(default_factory=ClaudeSearchConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     store_path: str = "data/topics.db"
+    cost_log_path: str = "data/costs.csv"
     # Override or add prices: {"model-id": [input_usd_per_1m, output_usd_per_1m]}
     prices: Dict[str, List[float]] = Field(default_factory=dict)
 

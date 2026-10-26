@@ -48,7 +48,7 @@ class OpenAIEmbedder:
     def embed(self, texts: List[str]) -> np.ndarray:
         resp = self.client.embeddings.create(model=self.model, input=texts)
         if self.budget:
-            self.budget.charge("openai", self.model, input_tokens=resp.usage.prompt_tokens)
+            self.budget.charge("openai", self.model, input_tokens=resp.usage.prompt_tokens, purpose="embed")
         return _unit(np.array([d.embedding for d in resp.data], dtype=np.float32))
 
 
@@ -64,7 +64,8 @@ class GeminiEmbedder:
         resp = self.client.models.embed_content(model=self.model, contents=texts)
         if self.budget:
             # The embed response carries no token count; estimate ~4 characters per token.
-            self.budget.charge("gemini", self.model, input_tokens=sum(len(t) for t in texts) // 4)
+            self.budget.charge("gemini", self.model, input_tokens=sum(len(t) for t in texts) // 4,
+                               purpose="embed")
         return _unit(np.array([e.values for e in resp.embeddings], dtype=np.float32))
 
 

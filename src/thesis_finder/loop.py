@@ -34,6 +34,7 @@ class LoopState:
     valid_in_store: int = 0
     new_this_run: int = 0
     valid_this_run: int = 0
+    round_costs: List[float] = field(default_factory=list)
 
 
 def stop_reason(state: LoopState, cfg: Config, providers: List[str], budget: Budget) -> Optional[str]:
@@ -42,6 +43,12 @@ def stop_reason(state: LoopState, cfg: Config, providers: List[str], budget: Bud
     loop = cfg.loop
     if budget.exhausted:
         return f"budget cap reached (${budget.spent_usd:.2f} of ${budget.limit_usd:.2f})"
+    if state.round_costs:
+        # Don't start a round that would likely overshoot the cap.
+        expected = max(state.round_costs[-3:])
+        if expected > budget.remaining:
+            return (f"budget nearly used (${budget.spent_usd:.2f} of ${budget.limit_usd:.2f}; "
+                    f"a round costs about ${expected:.2f})")
     if state.rounds_done >= loop.max_rounds:
         return f"max rounds reached ({loop.max_rounds})"
     needed = {(p, s.id) for p in providers for s in strategies.STRATEGIES}
@@ -97,13 +104,16 @@ class TopicLoop:
                 reason = stop_reason(state, self.cfg, names, self.budget)
                 if reason:
                     break
+                before = self.budget.spent_usd
                 self._round(run_id, state, names)
+                state.round_costs.append(self.budget.spent_usd - before)
                 state.rounds_done += 1
         except KeyboardInterrupt:
             reason = "stopped by you (Ctrl+C)"
         self.store.end_run(run_id, reason, self.budget.spent_usd)
         log.info("Stopped: %s. New topics this run: %d (%d valid). Spent $%.2f.",
                  reason, state.new_this_run, state.valid_this_run, self.budget.spent_usd)
+        log.info("Spend by provider and job: %s", self.budget.summary())
         return reason
 
     def _round(self, run_id: int, state: LoopState, names: List[str]) -> None:
@@ -136,18 +146,20 @@ class TopicLoop:
         if any_success:
             ratio = new_total / found_total if found_total else 0.0
             state.new_ratios.append(ratio)
-            log.info("Round %d: %d topics found, %d new (%.0f%%). Store: %d valid, %d invalid. Spent $%.2f.",
+            log.info("Round %d: %d topics found, %d new (%.0f%%). Store: %d valid, %d invalid. Spent $%.2f so far.",
                      state.rounds_done + 1, found_total, new_total, ratio * 100,
                      state.valid_in_store, self.store.count("invalid"), self.budget.spent_usd)
 
     def _search(self, provider: str, strategy_id: int, avoid: str) -> ResearchResult:
         strategy = strategies.get(strategy_id)
         try:
-            brief_prompt = prompts.planner_prompt(
-                self.cfg.profile, strategy, provider, avoid,
-                self._seed_papers(strategy), self.cfg.loop.topics_per_report,
-            )
-            brief = self.coordinator.plan(brief_prompt)
+            seeds = self._seed_papers(strategy)
+            n = self.cfg.loop.topics_per_report
+            if self.cfg.loop.planner == "claude":
+                brief = self.coordinator.plan(
+                    prompts.planner_prompt(self.cfg.profile, strategy, provider, avoid, seeds, n))
+            else:
+                brief = prompts.template_brief(self.cfg.profile, strategy, avoid, seeds, n)
             return self.searchers[provider].deep_search(brief, prompts.deep_search_system(), strategy_id)
         except Exception as exc:
             return ResearchResult(provider=provider, strategy_id=strategy_id, text="", error=str(exc))

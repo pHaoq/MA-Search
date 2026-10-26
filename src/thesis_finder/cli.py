@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import prompts
-from .budget import Budget
+from .budget import Budget, summarize_log
 from .config import Config, load_config
 from .dedup import Deduper
 from .embeddings import LocalEmbedder, make_embedder
@@ -22,7 +22,7 @@ KEY_VARS = {"claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY", "openai":
 
 
 def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
-    budget = Budget(cfg.loop.budget_usd, cfg.prices)
+    budget = Budget(cfg.loop.budget_usd, cfg.prices, log_path=None if demo else cfg.cost_log_path)
     store = TopicStore(cfg.store_path)
 
     if demo:
@@ -45,7 +45,7 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
 
     from .providers.claude import ClaudeProvider
 
-    claude = ClaudeProvider(cfg.models, budget)
+    claude = ClaudeProvider(cfg.models, budget, cfg.claude_search)
     searchers = []
     for name in cfg.providers:
         if name == "claude":
@@ -89,6 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     rep.add_argument("-n", "--limit", type=int, default=20)
 
     sub.add_parser("runs", help="Show past runs and why they stopped")
+    sub.add_parser("costs", help="Show spend from the cost log, by provider, job and model")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
@@ -104,6 +105,10 @@ def main(argv: list[str] | None = None) -> None:
             cfg.store_path = "data/demo.db"
         loop = build_loop(cfg, demo=args.demo)
         loop.run(max_rounds=args.rounds)
+        return
+
+    if args.command == "costs":
+        print(summarize_log(cfg.cost_log_path))
         return
 
     store = TopicStore(cfg.store_path)
