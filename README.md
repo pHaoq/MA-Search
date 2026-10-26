@@ -64,14 +64,29 @@ You need API keys. These are separate from Claude Pro, Gemini Pro and ChatGPT Pr
 
 Set a monthly spend limit in each console.
 
+macOS / Linux:
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e ".[dev]"
-
-cp .env.example .env             # add your three keys
+cp .env.example .env                 # add your three keys
 cp config.example.yaml config.yaml   # fill in your profile: interests, methods, university
 ```
+
+Windows (PowerShell), from the repo folder:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1      # if blocked: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+pip install -e ".[dev]"
+copy .env.example .env
+copy config.example.yaml config.yaml
+```
+
+Activate the venv in every new terminal before running the tool. If `thesis-finder` is still
+not found, `python -m thesis_finder` does the same thing (for example
+`python -m thesis_finder run --demo`).
 
 ## Usage
 
