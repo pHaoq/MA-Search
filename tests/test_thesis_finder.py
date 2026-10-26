@@ -116,3 +116,88 @@ def test_no_new_round_when_it_would_overshoot_budget():
     assert "nearly used" in stop_reason(state, cfg, PROVIDERS, budget)
     state.round_costs = [1.0]
     assert stop_reason(state, cfg, PROVIDERS, budget) is None
+
+
+def _store_with_valid(n):
+    store = TopicStore(":memory:")
+    for i in range(n):
+        store.add_topic(topic(f"Valid topic number {i} with even" + ("x" if i % 2 else "")),
+                        status="valid", reason="ok", strategy_id=0, found_by="claude",
+                        judgements={"claude": judgement(4, True)}, embedding=None)
+    return store
+
+
+def test_review_checks_top_picks_fails_back_to_invalid_and_parks():
+    from thesis_finder.providers.fake import FakeCoordinator
+    from thesis_finder.review import ReviewStep
+
+    cfg = Config()
+    cfg.review.top_k = 3
+    cfg.review.park_after = 2
+    store = _store_with_valid(6)
+    step = ReviewStep(cfg, store, Budget(10), FakeCoordinator(), find_related=lambda t, q: [])
+
+    out = step.run()
+    assert len(out.checked) + len(out.failed) == 3
+    assert store.count("checked") == len(out.checked)
+    for t in store.all_topics("invalid"):
+        assert t.reason.startswith("failed literature check")
+        assert t.lit_review["key_references"]
+    assert store.count("valid") == 3 and not out.parked  # passed over once
+
+    out2 = step.run()  # the remaining 3 are now the top picks
+    assert len(out2.checked) + len(out2.failed) == 3
+    assert store.count("valid") == 0
+
+
+def test_unpicked_topics_get_parked():
+    from thesis_finder.models import Ranking, RankedPick
+    from thesis_finder.providers.fake import FakeCoordinator
+    from thesis_finder.review import ReviewStep
+
+    class AlwaysFirst(FakeCoordinator):
+        def rank(self, prompt):
+            return Ranking(picks=[RankedPick(id=1, reason="x")])
+
+    cfg = Config()
+    cfg.review.top_k = 1
+    cfg.review.park_after = 1
+    store = _store_with_valid(3)
+    out = ReviewStep(cfg, store, Budget(10), AlwaysFirst(), find_related=lambda t, q: []).run()
+    assert len(out.parked) == 2
+    assert store.count("parked") == 2
+
+
+def test_low_novelty_from_any_judge_fails():
+    from thesis_finder.validator import Validator
+
+    class J:
+        def __init__(self, name, j):
+            self.name, self.j = name, j
+
+        def judge(self, prompt):
+            return self.j
+
+    weak = Judgement(novelty=2, feasibility=5, data_access=5, demand=5, fit=5, passes=True, reason="done before")
+    judges = [J("a", judgement(5, True)), J("b", judgement(5, True)), J("c", weak)]
+    v = Validator(judges, Config().profile, 2, 4.0, min_novelty=3, find_related=lambda t, q: [])
+    verdict = v.validate(topic("Some topic"))
+    assert not verdict.valid and "not novel enough" in verdict.reason
+
+
+def test_store_migrates_old_database(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("""CREATE TABLE topics (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+        norm_title TEXT NOT NULL, research_question TEXT NOT NULL, rationale TEXT, method TEXT, data_sources TEXT,
+        source_urls TEXT, strategy_id INTEGER, found_by TEXT, status TEXT NOT NULL, reason TEXT, judgements TEXT,
+        mean_score REAL, embedding BLOB, times_seen INTEGER NOT NULL DEFAULT 1, first_seen TEXT NOT NULL,
+        last_seen TEXT NOT NULL);
+        INSERT INTO topics (title, norm_title, research_question, status, first_seen, last_seen)
+        VALUES ('Old', 'old', 'Q?', 'valid', 'x', 'x');""")
+    conn.commit()
+    conn.close()
+    store = TopicStore(str(path))
+    assert store.all_topics()[0].passed_over == 0

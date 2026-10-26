@@ -20,6 +20,8 @@ models:
   claude_planner: claude-opus-5-5      # only used with loop.planner: claude
   claude_judge: claude-sonnet-5-5
   claude_fast: claude-haiku-5-5
+  claude_ranker: claude-fable-5-1      # strongest model; ranks valid topics in the review
+  claude_reviewer: claude-sonnet-5-5   # literature review of the top picks
   gemini_agent: deep-research-preview-04-2026   # or deep-research-max-preview-04-2026
   gemini_judge: gemini-4-argon
   openai_research: gpt-6.1-sol
@@ -52,7 +54,16 @@ dedup:
 
 validation:
   min_pass_votes: 2         # of the judges (one per provider)
-  min_mean_score: 3.5
+  min_mean_score: 4.0
+  min_novelty: 3            # every judge must score novelty at least this
+
+# Promotes the best valid topics to "checked". A topic that fails goes back to invalid.
+review:
+  every_rounds: 6           # one full rotation of models x strategies
+  at_end_of_run: true
+  top_k: 5                  # topics the ranker picks for a literature review
+  park_after: 3             # valid topics not picked in this many reviews are parked
+  max_candidates: 60
 
 store_path: data/topics.db
 cost_log_path: data/costs.csv   # every API call with tokens and USD; see `thesis-finder costs`

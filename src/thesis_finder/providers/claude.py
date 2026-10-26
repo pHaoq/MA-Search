@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..budget import Budget
 from ..config import ClaudeSearchConfig, ModelConfig
-from ..models import CandidateList, Judgement, ResearchBrief, ResearchResult, SameTopic
+from ..models import CandidateList, Judgement, LitReview, Ranking, ResearchBrief, ResearchResult, SameTopic
 from .base import Provider, ProviderError, urls_in
 
 T = TypeVar("T", bound=BaseModel)
@@ -29,8 +29,9 @@ class ClaudeProvider(Provider):
         self.budget = budget
         self.search = search or ClaudeSearchConfig()
 
-    def deep_search(self, brief: str, system: str, strategy_id: int) -> ResearchResult:
-        model = self.models.claude_research
+    def deep_search(self, brief: str, system: str, strategy_id: int, *, model: str | None = None,
+                    purpose: str = "search") -> ResearchResult:
+        model = model or self.models.claude_research
         tools = [
             {"type": "web_search_20260209", "name": "web_search", "max_uses": self.search.max_searches},
             {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": self.search.max_fetches,
@@ -49,7 +50,7 @@ class ClaudeProvider(Provider):
                 fallbacks="default",
                 betas=[FALLBACK_BETA],
             )
-            self._charge(model, response.usage, "search")
+            self._charge(model, response.usage, purpose)
             content.extend(response.content)
             if response.stop_reason == "refusal":
                 raise ProviderError("Claude declined this research brief")
@@ -91,6 +92,19 @@ class ClaudeProvider(Provider):
     def same_topic(self, prompt: str) -> bool:
         return self._parse(self.models.claude_fast, prompt, SameTopic, fallback=False, max_tokens=256,
                            purpose="dedup").same
+
+    # Review step
+
+    def rank(self, prompt: str) -> Ranking:
+        """The strongest model ranks valid topics against each other."""
+        return self._parse(self.models.claude_ranker, prompt, Ranking, fallback=True, max_tokens=16000,
+                           purpose="rank")
+
+    def literature_review(self, brief: str, system: str) -> ResearchResult:
+        return self.deep_search(brief, system, -1, model=self.models.claude_reviewer, purpose="review")
+
+    def assess_review(self, prompt: str) -> LitReview:
+        return self._parse(self.models.claude_reviewer, prompt, LitReview, fallback=True, purpose="review")
 
     def _parse(self, model: str, prompt: str, schema: Type[T], *, fallback: bool, max_tokens: int = 8000,
                purpose: str = "") -> T:

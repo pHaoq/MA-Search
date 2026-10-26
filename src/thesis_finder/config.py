@@ -17,6 +17,8 @@ class ModelConfig(BaseModel):
     claude_planner: str = "claude-opus-5-5"
     claude_judge: str = "claude-sonnet-5-5"
     claude_fast: str = "claude-haiku-5-5"
+    claude_ranker: str = "claude-fable-5-1"  # the strongest model; ranks valid topics in the review
+    claude_reviewer: str = "claude-sonnet-5-5"  # literature review of the top picks
     gemini_agent: str = "deep-research-preview-04-2026"
     gemini_judge: str = "gemini-4-argon"
     openai_research: str = "gpt-6.1-sol"
@@ -58,7 +60,18 @@ class DedupConfig(BaseModel):
 
 class ValidationConfig(BaseModel):
     min_pass_votes: int = 2
-    min_mean_score: float = 3.5
+    min_mean_score: float = 4.0
+    min_novelty: int = 3  # every judge must give at least this novelty score
+
+
+class ReviewConfig(BaseModel):
+    """The step that promotes valid topics to checked."""
+
+    every_rounds: int = 6  # one full rotation: every provider has tried every strategy
+    at_end_of_run: bool = True
+    top_k: int = 5
+    park_after: int = 3  # a valid topic passed over in this many reviews is parked
+    max_candidates: int = 60  # most valid topics handed to the ranker at once
 
 
 class Config(BaseModel):
@@ -70,6 +83,7 @@ class Config(BaseModel):
     loop: LoopConfig = Field(default_factory=LoopConfig)
     dedup: DedupConfig = Field(default_factory=DedupConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    review: ReviewConfig = Field(default_factory=ReviewConfig)
     store_path: str = "data/topics.db"
     cost_log_path: str = "data/costs.csv"
     # Override or add prices: {"model-id": [input_usd_per_1m, output_usd_per_1m]}

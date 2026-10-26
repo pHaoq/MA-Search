@@ -26,6 +26,25 @@ Each round:
    the mean score is at least 3.5.
 6. **Store** in SQLite (`data/topics.db`), then check the stop rules.
 
+### Statuses and the review step
+
+| Status | Meaning |
+|--------|---------|
+| `invalid` | Failed screening or the literature check; the reason is kept and the agents won't propose it again |
+| `valid` | Passed the first screening by the three judges |
+| `checked` | Ranked into the top picks by the strongest model and passed a literature review |
+| `parked` | Valid, but not picked in `park_after` reviews in a row |
+
+Every `every_rounds` rounds (default 6) and at the end of a run, the review step runs:
+Claude Fable 5.1 compares all valid topics side by side and picks the top `top_k` (default 5).
+Each pick gets a literature review (Claude Sonnet 5.5 with web search, plus OpenAlex): is the
+question already answered, is the gap real, is there enough literature, is the data reachable?
+Pass: `checked`, with the review summary and key references saved. Fail: back to `invalid`.
+A review costs roughly $3-6. Run it by hand with `thesis-finder review`.
+
+The first screening is strict on purpose: a mean judge score of at least 4.0, novelty of at
+least 3 from every judge, and judges are asked whether the topic is a top-10% master thesis.
+
 ### The six strategies
 
 | # | Strategy | Where it looks |
@@ -97,9 +116,11 @@ thesis-finder run --rounds 1      # one real round, to check keys and cost
 thesis-finder run                 # run until a stop rule is met
 thesis-finder run --budget 5      # override the budget cap for this run
 
+thesis-finder list --status checked
 thesis-finder list --status valid
 thesis-finder list --status invalid
-thesis-finder report              # writes reports/shortlist.md
+thesis-finder review              # rank the valid topics and literature-review the top 5 now
+thesis-finder report              # writes reports/shortlist.md, checked topics first
 thesis-finder runs                # past runs, spend and why each stopped
 thesis-finder costs               # spend by provider, job and model, from data/costs.csv
 ```
@@ -147,6 +168,7 @@ src/thesis_finder/
   providers/      claude.py, gemini.py, openai_provider.py, fake.py
   dedup.py        exact + embedding duplicate check
   validator.py    3-model scoring
+  review.py       ranking + literature review: valid -> checked
   store.py        SQLite topic store
   embeddings.py   OpenAI, Gemini or local embeddings
   sources/openalex.py  scholarly search for seeds and the novelty check

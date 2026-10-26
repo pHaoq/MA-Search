@@ -29,12 +29,14 @@ class Validator:
         profile: Profile,
         min_pass_votes: int,
         min_mean_score: float,
+        min_novelty: int = 1,
         find_related: Callable[[str, str], List[Work]] = related_work,
     ):
         self.judges = judges
         self.profile = profile
         self.min_pass_votes = min(min_pass_votes, len(judges))
         self.min_mean_score = min_mean_score
+        self.min_novelty = min_novelty
         self.find_related = find_related
 
     def validate(self, topic: TopicCandidate) -> Verdict:
@@ -56,6 +58,9 @@ class Validator:
         votes = sum(1 for j in judgements.values() if j.passes)
         mean = sum(j.mean for j in judgements.values()) / len(judgements)
         needed = min(self.min_pass_votes, len(judgements))
+        low_novelty = [j for j in judgements.values() if j.novelty < self.min_novelty]
+        if low_novelty:
+            return Verdict(False, f"not novel enough: {low_novelty[0].reason}", judgements)
         if votes >= needed and mean >= self.min_mean_score:
             best = max(judgements.values(), key=lambda j: j.mean)
             return Verdict(True, best.reason, judgements)

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 # model id -> (input $/1M tokens, output $/1M tokens)
 DEFAULT_PRICES: Dict[str, Tuple[float, float]] = {
+    "claude-fable-5-1": (10.00, 50.00),
     "claude-opus-5-5": (4.00, 20.00),
     "claude-sonnet-5-5": (2.00, 10.00),
     "claude-haiku-5-5": (0.10, 0.50),

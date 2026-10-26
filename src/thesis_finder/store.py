@@ -27,12 +27,15 @@ CREATE TABLE IF NOT EXISTS topics (
     source_urls TEXT,           -- JSON list
     strategy_id INTEGER,
     found_by TEXT,
-    status TEXT NOT NULL,       -- 'valid' or 'invalid'
+    status TEXT NOT NULL,       -- 'valid', 'invalid', 'checked' or 'parked'
     reason TEXT,
     judgements TEXT,            -- JSON {provider: Judgement}
     mean_score REAL,
     embedding BLOB,
     times_seen INTEGER NOT NULL DEFAULT 1,
+    passed_over INTEGER NOT NULL DEFAULT 0,  -- reviews where it was ranked but not picked
+    lit_review TEXT,            -- JSON LitReview, set by the review step
+    reviewed_at TEXT,
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL
 );
@@ -82,6 +85,8 @@ class StoredTopic:
     data_sources: List[str] = field(default_factory=list)
     source_urls: List[str] = field(default_factory=list)
     embedding: Optional[np.ndarray] = None
+    passed_over: int = 0
+    lit_review: Optional[dict] = None
 
 
 class TopicStore:
@@ -91,7 +96,20 @@ class TopicStore:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self._lock = threading.Lock()
+
+    def _migrate(self) -> None:
+        """Add columns that newer versions need to a store created by an older version."""
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(topics)")}
+        for name, ddl in [
+            ("passed_over", "INTEGER NOT NULL DEFAULT 0"),
+            ("lit_review", "TEXT"),
+            ("reviewed_at", "TEXT"),
+        ]:
+            if name not in have:
+                self.conn.execute(f"ALTER TABLE topics ADD COLUMN {name} {ddl}")
+        self.conn.commit()
 
     # topics
 
@@ -143,6 +161,26 @@ class TopicStore:
                 (_now(), topic_id),
             )
 
+    def set_review(self, topic_id: int, status: str, reason: str, lit_review_json: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute(
+                "UPDATE topics SET status = ?, reason = ?, lit_review = ?, reviewed_at = ? WHERE id = ?",
+                (status, reason, lit_review_json, _now(), topic_id),
+            )
+
+    def pass_over(self, topic_id: int, park_after: int) -> bool:
+        """Count a review where the topic was ranked but not picked. Returns True if it got parked."""
+        with self._lock, self.conn:
+            self.conn.execute("UPDATE topics SET passed_over = passed_over + 1 WHERE id = ?", (topic_id,))
+            row = self.conn.execute("SELECT passed_over FROM topics WHERE id = ?", (topic_id,)).fetchone()
+            if row["passed_over"] >= park_after:
+                self.conn.execute(
+                    "UPDATE topics SET status = 'parked', reason = ? WHERE id = ?",
+                    (f"not picked in {row['passed_over']} reviews", topic_id),
+                )
+                return True
+        return False
+
     def find_by_title(self, title: str) -> Optional[StoredTopic]:
         row = self.conn.execute(
             "SELECT * FROM topics WHERE norm_title = ? LIMIT 1", (normalize_title(title),)
@@ -156,11 +194,11 @@ class TopicStore:
             rows = self.conn.execute("SELECT * FROM topics ORDER BY id")
         return [self._row(r) for r in rows]
 
-    def ranked_valid(self, limit: Optional[int] = None) -> List[StoredTopic]:
-        sql = "SELECT * FROM topics WHERE status = 'valid' ORDER BY mean_score DESC, times_seen DESC"
+    def ranked(self, status: str = "valid", limit: Optional[int] = None) -> List[StoredTopic]:
+        sql = "SELECT * FROM topics WHERE status = ? ORDER BY mean_score DESC, times_seen DESC"
         if limit:
             sql += f" LIMIT {int(limit)}"
-        return [self._row(r) for r in self.conn.execute(sql)]
+        return [self._row(r) for r in self.conn.execute(sql, (status,))]
 
     def count(self, status: Optional[str] = None) -> int:
         if status:
@@ -218,4 +256,6 @@ class TopicStore:
             data_sources=json.loads(r["data_sources"] or "[]"),
             source_urls=json.loads(r["source_urls"] or "[]"),
             embedding=emb,
+            passed_over=r["passed_over"],
+            lit_review=json.loads(r["lit_review"]) if r["lit_review"] else None,
         )

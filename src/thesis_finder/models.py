@@ -71,13 +71,35 @@ class Judgement(BaseModel):
         return (self.novelty + self.feasibility + self.data_access + self.demand + self.fit) / 5
 
 
+class RankedPick(BaseModel):
+    id: int = Field(description="The topic id from the list")
+    reason: str = Field(description="Why it ranks this high, one sentence")
+
+
+class Ranking(BaseModel):
+    picks: List[RankedPick] = Field(description="The best topics, best first")
+
+
+class LitReview(BaseModel):
+    """Outcome of the literature review of one top-ranked topic."""
+
+    already_answered: bool = Field(description="The research question is already answered by existing work")
+    gap_is_real: bool = Field(description="The literature confirms an open gap this thesis would fill")
+    enough_literature: bool = Field(description="There is enough prior work to build a thesis on")
+    data_reachable: bool = Field(description="A master student can realistically get the needed data")
+    passes: bool
+    summary: str = Field(description="What the literature says about this topic, 3 to 6 sentences")
+    key_references: List[str] = Field(description="The most relevant papers: authors, year, title, URL or DOI")
+    reason: str = Field(description="Main reason it passes or fails, one sentence")
+
+
 class SameTopic(BaseModel):
     same: bool
 
 
 class ResearchResult(BaseModel):
     provider: str
-    strategy_id: int
+    strategy_id: int  # -1 for a literature review
     text: str
     sources: List[str] = Field(default_factory=list)
     error: Optional[str] = None

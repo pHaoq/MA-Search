@@ -15,6 +15,7 @@ from .dedup import Deduper
 from .embeddings import LocalEmbedder, make_embedder
 from .loop import TopicLoop
 from .report import markdown_report
+from .review import ReviewStep
 from .store import TopicStore
 from .validator import Validator
 
@@ -32,10 +33,12 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
         coordinator = FakeCoordinator()
         embedder = LocalEmbedder()
         validator = Validator(searchers, cfg.profile, cfg.validation.min_pass_votes,
-                              cfg.validation.min_mean_score, find_related=lambda t, q: [])
+                              cfg.validation.min_mean_score, cfg.validation.min_novelty,
+                              find_related=lambda t, q: [])
         deduper = Deduper(store, embedder, cfg.dedup.duplicate_threshold, cfg.dedup.borderline_threshold)
+        review = ReviewStep(cfg, store, budget, coordinator, find_related=lambda t, q: [])
         return TopicLoop(cfg, store, budget, searchers, coordinator, deduper, validator,
-                         seed_search=lambda *a, **k: [])
+                         seed_search=lambda *a, **k: [], review_step=review)
 
     missing = [KEY_VARS[p] for p in {"claude", *cfg.providers} if not os.environ.get(KEY_VARS[p])]
     if cfg.embedding.provider in KEY_VARS and not os.environ.get(KEY_VARS[cfg.embedding.provider]):
@@ -66,8 +69,10 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
         store, embedder, cfg.dedup.duplicate_threshold, cfg.dedup.borderline_threshold,
         same_topic=lambda a, b: claude.same_topic(prompts.same_topic_prompt(a, b)),
     )
-    validator = Validator(searchers, cfg.profile, cfg.validation.min_pass_votes, cfg.validation.min_mean_score)
-    return TopicLoop(cfg, store, budget, searchers, claude, deduper, validator)
+    validator = Validator(searchers, cfg.profile, cfg.validation.min_pass_votes, cfg.validation.min_mean_score,
+                          cfg.validation.min_novelty)
+    review = ReviewStep(cfg, store, budget, claude)
+    return TopicLoop(cfg, store, budget, searchers, claude, deduper, validator, review_step=review)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -82,7 +87,11 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--demo", action="store_true", help="Use offline fake providers (no keys, no cost)")
 
     lst = sub.add_parser("list", help="List stored topics")
-    lst.add_argument("--status", choices=["valid", "invalid"])
+    lst.add_argument("--status", choices=["checked", "valid", "invalid", "parked"])
+
+    rev = sub.add_parser("review", help="Rank the valid topics now and literature-review the top ones")
+    rev.add_argument("--budget", type=float, help="Override the budget cap in USD for this review")
+    rev.add_argument("--demo", action="store_true", help="Use offline fake providers (no keys, no cost)")
 
     rep = sub.add_parser("report", help="Write a Markdown shortlist of the best valid topics")
     rep.add_argument("-o", "--output", default="reports/shortlist.md")
@@ -107,6 +116,14 @@ def main(argv: list[str] | None = None) -> None:
         loop.run(max_rounds=args.rounds)
         return
 
+    if args.command == "review":
+        if args.budget is not None:
+            cfg.loop.budget_usd = args.budget
+        if args.demo and cfg.store_path == "data/topics.db":
+            cfg.store_path = "data/demo.db"
+        build_loop(cfg, demo=args.demo).review_step.run()
+        return
+
     if args.command == "costs":
         print(summarize_log(cfg.cost_log_path))
         return
@@ -115,7 +132,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "list":
         for t in store.all_topics(args.status):
             score = f"{t.mean_score:.1f}" if t.mean_score is not None else "  - "
-            print(f"[{t.status:7}] {score}  x{t.times_seen}  {t.title}" + (f"  ({t.reason})" if t.status == "invalid" else ""))
+            print(f"[{t.status:7}] {score}  x{t.times_seen}  {t.title}" + (f"  ({t.reason})" if t.status in ("invalid", "parked") else ""))
     elif args.command == "report":
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         Path(args.output).write_text(markdown_report(store, args.limit))

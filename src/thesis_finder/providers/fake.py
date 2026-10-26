@@ -6,7 +6,7 @@ from __future__ import annotations
 import random
 import re
 
-from ..models import CandidateList, Judgement, ResearchResult, TopicCandidate
+from ..models import CandidateList, Judgement, LitReview, Ranking, RankedPick, ResearchResult, TopicCandidate
 from .base import Provider
 
 # A small, finite pool so a demo run saturates the way a real one eventually does.
@@ -60,3 +60,20 @@ class FakeCoordinator:
 
     def same_topic(self, prompt: str) -> bool:
         return False
+
+    def rank(self, prompt: str) -> Ranking:
+        ids = [int(i) for i in re.findall(r"\[id (\d+)\]", prompt)]
+        k = int(re.search(r"pick the (\d+) best", prompt).group(1))
+        return Ranking(picks=[RankedPick(id=i, reason="demo") for i in ids[:k]])
+
+    def literature_review(self, brief: str, system: str) -> ResearchResult:
+        title = re.search(r"Topic: (.*)", brief).group(1)
+        return ResearchResult(provider="claude", strategy_id=-1, text=f"Review of {title}")
+
+    def assess_review(self, prompt: str) -> LitReview:
+        # Deterministic: about half pass.
+        title = re.search(r"Topic: (.*)", prompt).group(1)
+        ok = len(title) % 2 == 0
+        return LitReview(already_answered=not ok, gap_is_real=ok, enough_literature=True, data_reachable=True,
+                         passes=ok, summary="demo review", key_references=["Doe (2024) Demo paper"],
+                         reason="gap confirmed" if ok else "already answered by prior work")

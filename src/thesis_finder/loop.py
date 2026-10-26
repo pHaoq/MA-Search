@@ -35,6 +35,7 @@ class LoopState:
     new_this_run: int = 0
     valid_this_run: int = 0
     round_costs: List[float] = field(default_factory=list)
+    last_review_round: int = -1
 
 
 def stop_reason(state: LoopState, cfg: Config, providers: List[str], budget: Budget) -> Optional[str]:
@@ -55,7 +56,7 @@ def stop_reason(state: LoopState, cfg: Config, providers: List[str], budget: Bud
     if not needed <= state.covered:
         return None
     if state.valid_in_store >= loop.target_valid:
-        return f"target reached ({state.valid_in_store} valid topics stored)"
+        return f"target reached ({state.valid_in_store} valid or checked topics stored)"
     recent = state.new_ratios[-loop.saturation_rounds:]
     if len(recent) == loop.saturation_rounds and all(r < loop.saturation_new_ratio for r in recent):
         pct = int(loop.saturation_new_ratio * 100)
@@ -82,6 +83,7 @@ class TopicLoop:
         deduper: Deduper,
         validator: Validator,
         seed_search=search_works,
+        review_step=None,
     ):
         self.cfg = cfg
         self.store = store
@@ -91,12 +93,13 @@ class TopicLoop:
         self.deduper = deduper
         self.validator = validator
         self.seed_search = seed_search
+        self.review_step = review_step
 
     def run(self, max_rounds: Optional[int] = None) -> str:
         if max_rounds is not None:
             self.cfg.loop.max_rounds = max_rounds
         run_id = self.store.start_run()
-        state = LoopState(valid_in_store=self.store.count("valid"))
+        state = LoopState(valid_in_store=(self.store.count("valid") + self.store.count("checked")))
         names = list(self.searchers)
         reason = None
         try:
@@ -108,8 +111,14 @@ class TopicLoop:
                 self._round(run_id, state, names)
                 state.round_costs.append(self.budget.spent_usd - before)
                 state.rounds_done += 1
+                if self.review_step and state.rounds_done % self.cfg.review.every_rounds == 0:
+                    self._review(state)
         except KeyboardInterrupt:
             reason = "stopped by you (Ctrl+C)"
+        else:
+            if (self.review_step and self.cfg.review.at_end_of_run and state.rounds_done > 0
+                    and state.last_review_round != state.rounds_done and not self.budget.exhausted):
+                self._review(state)
         self.store.end_run(run_id, reason, self.budget.spent_usd)
         log.info("Stopped: %s. New topics this run: %d (%d valid). Spent $%.2f.",
                  reason, state.new_this_run, state.valid_this_run, self.budget.spent_usd)
@@ -121,7 +130,11 @@ class TopicLoop:
         log.info("Round %d: %s", state.rounds_done + 1,
                  ", ".join(f"{p} -> {strategies.get(s).name}" for p, s in jobs))
 
-        avoid = prompts.avoid_block(self.store.all_topics("valid"), self.store.all_topics("invalid"))
+        known = sorted(
+            self.store.all_topics("valid") + self.store.all_topics("checked") + self.store.all_topics("parked"),
+            key=lambda t: t.id,
+        )
+        avoid = prompts.avoid_block(known, self.store.all_topics("invalid"))
         with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
             results = list(pool.map(lambda job: self._search(job[0], job[1], avoid), jobs))
 
@@ -142,13 +155,21 @@ class TopicLoop:
             if self.budget.exhausted:
                 break
 
-        state.valid_in_store = self.store.count("valid")
+        state.valid_in_store = (self.store.count("valid") + self.store.count("checked"))
         if any_success:
             ratio = new_total / found_total if found_total else 0.0
             state.new_ratios.append(ratio)
             log.info("Round %d: %d topics found, %d new (%.0f%%). Store: %d valid, %d invalid. Spent $%.2f so far.",
                      state.rounds_done + 1, found_total, new_total, ratio * 100,
                      state.valid_in_store, self.store.count("invalid"), self.budget.spent_usd)
+
+    def _review(self, state: LoopState) -> None:
+        state.last_review_round = state.rounds_done
+        try:
+            self.review_step.run()
+        except Exception as exc:
+            log.warning("Review step failed, topics stay valid: %s", exc)
+        state.valid_in_store = (self.store.count("valid") + self.store.count("checked"))
 
     def _search(self, provider: str, strategy_id: int, avoid: str) -> ResearchResult:
         strategy = strategies.get(strategy_id)
