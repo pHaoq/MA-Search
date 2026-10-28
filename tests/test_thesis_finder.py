@@ -180,7 +180,7 @@ def test_low_novelty_from_any_judge_fails():
             return self.j
 
     weak = Judgement(novelty=2, feasibility=5, data_access=5, demand=5, fit=5, passes=True, reason="done before")
-    judges = [J("a", judgement(5, True)), J("b", judgement(5, True)), J("c", weak)]
+    judges = [J("a", judgement(5, True)), J("b", weak), J("c", judgement(5, True))]
     v = Validator(judges, Config().profile, 2, 4.0, min_novelty=3, find_related=lambda t, q: [])
     verdict = v.validate(topic("Some topic"))
     assert not verdict.valid and "not novel enough" in verdict.reason
@@ -269,7 +269,7 @@ def test_topic_without_a_stated_addition_fails_without_judging():
     assert j.calls == 0
 
 
-def test_third_judge_is_skipped_when_first_two_fail():
+def test_third_judge_only_breaks_ties():
     from thesis_finder.validator import Validator
 
     judges = [CountingJudge("a", judgement(2, False)), CountingJudge("b", judgement(3, False)),
@@ -282,7 +282,13 @@ def test_third_judge_is_skipped_when_first_two_fail():
               CountingJudge("c", judgement(5, True))]
     v = Validator(judges, Config().profile, 2, 3.5, min_novelty=1, find_related=lambda t, q: [])
     assert v.validate(topic("Some topic")).valid
-    assert judges[2].calls == 1
+    assert judges[2].calls == 1  # split decision: the third judge breaks the tie
+
+    judges = [CountingJudge("a", judgement(4, True)), CountingJudge("b", judgement(4, True)),
+              CountingJudge("c", judgement(1, False))]
+    v = Validator(judges, Config().profile, 2, 3.5, min_novelty=1, find_related=lambda t, q: [])
+    assert v.validate(topic("Some topic")).valid
+    assert judges[2].calls == 0  # the first two agree, so the third is not paid
 
 
 def test_prior_art_rejects_topic_that_is_already_published(tmp_path):
@@ -367,3 +373,31 @@ def test_openalex_query_is_short_keywords_and_retries_on_400(monkeypatch):
     works = openalex.search_works(long, limit=3)
     assert [w.title for w in works] == ["Paper"]
     assert len(sent) == 2 and len(sent[1].split()) == 4
+
+
+def test_openai_reviewer_parses_ranking_and_review():
+    from thesis_finder.config import ModelConfig
+    from thesis_finder.models import LitReview, Ranking, RankedPick
+    from thesis_finder.providers.openai_provider import OpenAIProvider
+
+    class Resp:
+        def __init__(self, parsed):
+            self.output_parsed, self.usage, self.service_tier = parsed, None, "default"
+
+    seen = []
+
+    class Responses:
+        def parse(self, **kwargs):
+            seen.append(kwargs)
+            if kwargs["text_format"] is Ranking:
+                return Resp(Ranking(picks=[RankedPick(id=2, reason="best")]))
+            return Resp(LitReview(already_answered=False, gap_is_real=True, enough_literature=True,
+                                  data_reachable=True, passes=True, summary="s", key_references=["Doe 2025"],
+                                  reason="ok"))
+
+    p = OpenAIProvider.__new__(OpenAIProvider)
+    p.models, p.budget, p.flex_search, p.flex_judge = ModelConfig(), Budget(10), False, False
+    p.client = type("C", (), {"responses": Responses()})()
+    assert p.rank("rank these").picks[0].id == 2
+    assert p.assess_review("assess").passes
+    assert seen[0]["reasoning"] == {"effort": "high"} and seen[0]["model"] == "gpt-6.1-sol"

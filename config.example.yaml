@@ -24,12 +24,13 @@ models:
   claude_planner: claude-opus-5-5      # only used with loop.planner: claude
   claude_judge: claude-sonnet-5-5
   claude_fast: claude-haiku-5-5
-  claude_ranker: claude-fable-5-1      # strongest model; ranks valid topics in the review
-  claude_reviewer: claude-sonnet-5-5   # literature review of the top picks
+  claude_ranker: claude-fable-5-1      # only with review.provider: claude
+  claude_reviewer: claude-sonnet-5-5   # only with review.provider: claude
   gemini_agent: deep-research-preview-04-2026   # or deep-research-max-preview-04-2026
   gemini_judge: gemini-4-argon
   openai_research: gpt-6.1-sol
   openai_judge: gpt-6.1-sol
+  openai_ranker: gpt-6.1-sol           # ranks valid topics in the review
 
 # Limits for one Claude deep search. Every search result and fetched page is added to
 # the context and re-read on each step, so these drive most of Claude's cost.
@@ -75,6 +76,7 @@ validation:
 
 # Promotes the best valid topics to "checked". A topic that fails goes back to invalid.
 review:
+  provider: openai          # openai (cheaper) | claude (Fable 5.1 ranks, Sonnet 5.5 reviews; several times the cost)
   every_rounds: 7           # one full rotation of models x strategies
   at_end_of_run: true
   top_k: 5                  # topics the ranker picks for a literature review

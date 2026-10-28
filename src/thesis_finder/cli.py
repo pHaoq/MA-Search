@@ -43,7 +43,8 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
         return TopicLoop(cfg, store, budget, searchers, coordinator, deduper, validator,
                          seed_search=lambda *a, **k: [], review_step=review)
 
-    missing = [KEY_VARS[p] for p in {"claude", *cfg.providers} if not os.environ.get(KEY_VARS[p])]
+    needed = {"claude", *cfg.providers, cfg.review.provider} & set(KEY_VARS)
+    missing = [KEY_VARS[p] for p in needed if not os.environ.get(KEY_VARS[p])]
     if cfg.embedding.provider in KEY_VARS and not os.environ.get(KEY_VARS[cfg.embedding.provider]):
         missing.append(KEY_VARS[cfg.embedding.provider])
     if missing:
@@ -74,9 +75,20 @@ def build_loop(cfg: Config, demo: bool = False) -> TopicLoop:
         store, embedder, cfg.dedup.duplicate_threshold, cfg.dedup.borderline_threshold,
         same_topic=lambda a, b: claude.same_topic(prompts.same_topic_prompt(a, b)),
     )
-    validator = Validator(searchers, cfg.profile, cfg.validation.min_pass_votes, cfg.validation.min_mean_score,
+    # Claude judges last: with early exit it is only asked when GPT and Gemini disagree.
+    judges = sorted(searchers, key=lambda p: p.name == "claude")
+    validator = Validator(judges, cfg.profile, cfg.validation.min_pass_votes, cfg.validation.min_mean_score,
                           cfg.validation.min_novelty)
-    review = ReviewStep(cfg, store, budget, claude)
+    if cfg.review.provider == "claude":
+        reviewer = claude
+    elif cfg.review.provider == "openai":
+        from .providers.openai_provider import OpenAIProvider
+
+        reviewer = next((p for p in searchers if p.name == "openai"), None) or OpenAIProvider(
+            cfg.models, budget, flex_search=cfg.cost.flex_search, flex_judge=cfg.cost.flex_judge)
+    else:
+        sys.exit(f"Unknown review.provider in config: {cfg.review.provider} (use openai or claude)")
+    review = ReviewStep(cfg, store, budget, reviewer)
     prior_art = None
     if cfg.originality.prior_art_check:
         prior_art = PriorArtChecker(

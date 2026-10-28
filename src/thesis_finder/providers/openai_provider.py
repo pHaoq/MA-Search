@@ -12,7 +12,7 @@ from openai import OpenAI
 
 from ..budget import FLEX_FACTOR, Budget
 from ..config import ModelConfig
-from ..models import Judgement, ResearchResult
+from ..models import Judgement, LitReview, Ranking, ResearchResult
 from .base import Provider, ProviderError, urls_in
 
 log = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class OpenAIProvider(Provider):
         self.budget.charge(self.name, model, usage.input_tokens - cached, usage.output_tokens, searches,
                            cache_read_tokens=cached, purpose=purpose, token_factor=factor)
 
-    def deep_search(self, brief: str, system: str, strategy_id: int) -> ResearchResult:
+    def deep_search(self, brief: str, system: str, strategy_id: int, *, purpose: str = "search") -> ResearchResult:
         model = self.models.openai_research
         response = self._create(
             self.client.responses.create,
@@ -76,7 +76,7 @@ class OpenAIProvider(Provider):
             response = self.client.responses.retrieve(response.id)
 
         searches = sum(1 for item in response.output if item.type == "web_search_call")
-        self._charge(model, response, searches, "search")
+        self._charge(model, response, searches, purpose)
         if response.status != "completed":
             raise ProviderError(f"OpenAI deep search ended with status {response.status}")
 
@@ -101,4 +101,24 @@ class OpenAIProvider(Provider):
         self._charge(model, response, 0, "judge")
         if response.output_parsed is None:
             raise ProviderError("OpenAI returned no judgement")
+        return response.output_parsed
+
+    # Review jobs: rank the valid topics, literature-review the top picks, turn the review into a verdict.
+
+    def rank(self, prompt: str) -> Ranking:
+        return self._parse(self.models.openai_ranker, prompt, Ranking, "rank", effort="high")
+
+    def literature_review(self, brief: str, system: str) -> ResearchResult:
+        return self.deep_search(brief, system, -1, purpose="review")
+
+    def assess_review(self, prompt: str) -> LitReview:
+        return self._parse(self.models.openai_judge, prompt, LitReview, "review")
+
+    def _parse(self, model: str, prompt: str, schema, purpose: str, effort: str | None = None):
+        kwargs = {"reasoning": {"effort": effort}} if effort else {}
+        response = self._create(self.client.responses.parse, self.flex_judge, model=model, input=prompt,
+                                text_format=schema, **kwargs)
+        self._charge(model, response, 0, purpose)
+        if response.output_parsed is None:
+            raise ProviderError(f"OpenAI returned no {schema.__name__}")
         return response.output_parsed

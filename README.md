@@ -28,7 +28,7 @@ Each round:
 6. **Validate.** A topic that does not say what it adds beyond existing work fails right away.
    Otherwise the judges score it (novelty, feasibility, data access, demand, fit), with the
    closest papers in front of them. Valid = at least 2 of 3 pass and the mean is at least 3.5.
-   The third judge is only asked when the first two leave the verdict open.
+   GPT and Gemini judge first; Claude is only asked when they disagree.
 7. **Store** in SQLite (`data/topics.db`), then check the stop rules.
 
 ### Statuses and the review step
@@ -41,11 +41,12 @@ Each round:
 | `parked` | Valid, but not picked in `park_after` reviews in a row |
 
 Every `every_rounds` rounds (default 7) and at the end of a run, the review step runs:
-Claude Fable 5.1 compares all valid topics side by side and picks the top `top_k` (default 5).
-Each pick gets a literature review (Claude Sonnet 5.5 with web search, plus OpenAlex): is the
+GPT-6.1 Sol (high reasoning) compares all valid topics side by side and picks the top `top_k`
+(default 5). Each pick gets a literature review (GPT with web search, plus OpenAlex): is the
 question already answered, is the gap real, is there enough literature, is the data reachable?
+Set `review.provider: claude` to use Claude Fable 5.1 and Sonnet 5.5 instead (several times the cost).
 Pass: `checked`, with the review summary and key references saved. Fail: back to `invalid`.
-A review costs roughly $3-6. Run it by hand with `thesis-finder review`.
+A review costs roughly $1-2 with GPT (about $3-6 with Claude). Run it by hand with `thesis-finder review`.
 
 The first screening is strict on purpose: judges are told a typical proposal scores 3 and asked
 whether the topic is a top-10% master thesis; a topic needs a mean score of at least 3.5 and
@@ -153,7 +154,7 @@ thesis-finder costs               # spend by provider, job and model, from data/
 ```
 
 To use fewer providers (for example Claude only while testing), set `providers: [claude]`
-in `config.yaml`. Claude is always used as the coordinator.
+in `config.yaml`. Claude Haiku 5.5 always extracts topics and checks duplicates (it costs cents per run).
 
 ## Cost
 
@@ -163,7 +164,8 @@ What drives Claude's cost:
   added to Claude's context, and the whole context is billed again at each step of the
   search. More searches and fetches, bigger pages and higher effort multiply the cost. The
   defaults are Sonnet 5.5, 8 searches, 4 fetches, pages capped at 15,000 tokens, medium effort.
-- **Judging**: every new topic gets one Claude call (Sonnet 5.5) besides Gemini and GPT.
+- **Judging**: Claude (Sonnet 5.5) only judges a topic when GPT and Gemini disagree.
+- **Review**: runs on GPT by default; `review.provider: claude` moves it back to Fable 5.1 + Sonnet 5.5.
 - **Extraction and duplicate checks** use Haiku 5.5 and are cheap.
 - **Planning** is a free template by default; `planner: claude` adds one Claude call per search.
 
@@ -176,8 +178,8 @@ Built-in savings that keep the same models:
   minutes, so rounds get much slower.
 - **Free filters before paid judges**: duplicates, topics without a stated addition, and topics
   the prior-art check finds already published never reach a judge.
-- **Early exit**: when the first two judges both fail a topic (or one scores novelty too low),
-  the third is not asked. Most topics fail, so this saves about a third of judge calls.
+- **Early exit**: GPT and Gemini judge first. When they agree (both pass or both fail), Claude
+  is not asked; it only breaks ties.
 - **Cached input**: OpenAI's discounted cached tokens are now billed as such in the cost log.
 
 Not used, and why: the 50% Batch APIs return results in minutes to hours and do not support

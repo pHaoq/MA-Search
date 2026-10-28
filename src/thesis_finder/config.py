@@ -17,12 +17,13 @@ class ModelConfig(BaseModel):
     claude_planner: str = "claude-opus-5-5"
     claude_judge: str = "claude-sonnet-5-5"
     claude_fast: str = "claude-haiku-5-5"
-    claude_ranker: str = "claude-fable-5-1"  # the strongest model; ranks valid topics in the review
-    claude_reviewer: str = "claude-sonnet-5-5"  # literature review of the top picks
+    claude_ranker: str = "claude-fable-5-1"  # used only with review.provider: claude
+    claude_reviewer: str = "claude-sonnet-5-5"  # used only with review.provider: claude
     gemini_agent: str = "deep-research-preview-04-2026"
     gemini_judge: str = "gemini-4-argon"
     openai_research: str = "gpt-6.1-sol"
     openai_judge: str = "gpt-6.1-sol"
+    openai_ranker: str = "gpt-6.1-sol"  # ranks valid topics in the review (high reasoning effort)
 
 
 class EmbeddingConfig(BaseModel):
@@ -87,6 +88,9 @@ class ValidationConfig(BaseModel):
 class ReviewConfig(BaseModel):
     """The step that promotes valid topics to checked."""
 
+    # Who ranks and literature-reviews: "openai" (default, cheaper) or "claude" (Fable 5.1 ranks,
+    # Sonnet 5.5 reviews; better, but costs several times more).
+    provider: str = "openai"
     every_rounds: int = 7  # one full rotation: every provider has tried every strategy
     at_end_of_run: bool = True
     top_k: int = 5

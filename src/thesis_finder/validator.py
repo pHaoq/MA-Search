@@ -46,8 +46,8 @@ class Validator:
             related = self.find_related(topic.title, topic.research_question)
         prompt = prompts.judge_prompt(self.profile, topic, related, self.profile.timeframe_months)
 
-        # Ask the first judges; ask the rest only if the verdict is still open. Most topics fail,
-        # and when the first judges already sink one, the remaining calls are money for nothing.
+        # Ask the first judges; ask the rest only if the verdict is still open (the first judges
+        # disagree). When they already agree, the remaining calls are money for nothing.
         first = max(1, self.min_pass_votes)
         judgements = self._ask(self.judges[:first], prompt)
         if self.judges[first:] and not self._decided(judgements):
@@ -71,11 +71,16 @@ class Validator:
         return Verdict(False, worst.reason, judgements)
 
     def _decided(self, judgements: Dict[str, Judgement]) -> bool:
-        """True when the remaining judges cannot make the topic valid."""
+        """True when the remaining judges cannot change the verdict: the topic already failed,
+        or the first judges agree it passes (enough votes and a high enough mean)."""
         if any(j.novelty < self.min_novelty for j in judgements.values()):
             return True
         fails = sum(1 for j in judgements.values() if not j.passes)
-        return len(self.judges) - fails < self.min_pass_votes
+        if len(self.judges) - fails < self.min_pass_votes:
+            return True
+        votes = len(judgements) - fails
+        mean = sum(j.mean for j in judgements.values()) / len(judgements) if judgements else 0.0
+        return votes >= self.min_pass_votes and mean >= self.min_mean_score
 
     def _ask(self, judges: List[Provider], prompt: str) -> Dict[str, Judgement]:
         judgements: Dict[str, Judgement] = {}

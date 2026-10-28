@@ -67,7 +67,7 @@ class ReviewStep:
         if len(pool) <= rc.top_k:
             picks = [t.id for t in pool]
         else:
-            log.info("Review: ranking %d valid topics with %s...", len(pool), self.cfg.models.claude_ranker)
+            log.info("Review: ranking %d valid topics...", len(pool))
             ranking = self.reviewer.rank(prompts.rank_prompt(self.cfg.profile, pool, rc.top_k))
             known = {t.id for t in pool}
             picks = []
